@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { ASSERTIONS_ENABLED } from "../src/util/assertions.js";
 import { IllegalStateException } from "../src/errors.js";
 import { BytesRef } from "../src/util/BytesRef.js";
 import { StringHelper } from "../src/util/StringHelper.js";
@@ -129,6 +130,8 @@ test("isValid rejects inconsistent slices", () => {
   ref.length = 2;
   assert.throws(() => ref.isValid(), IllegalStateException);
 
-  // the constructors assert validity
-  assert.throws(() => new BytesRef(bytes, 3, 2), /./);
+  // the constructors assert validity (a Java `assert`, evaluated only while LUCENE_ASSERTIONS is not 0)
+  if (ASSERTIONS_ENABLED) {
+    assert.throws(() => new BytesRef(bytes, 3, 2), /./);
+  }
 });
