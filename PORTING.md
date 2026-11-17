@@ -4,6 +4,16 @@ Source de référence : `lucene-5.2.1-src.tgz`, extrait dans `../lucene-src/luce
 Le portage part du module `core` (~155 000 lignes Java) et avance par couches, de bas en haut :
 `util` → `store` → `analysis` → `document` → `index` → `search` (le module `codecs` suit `index`).
 
+## Reprendre le travail (nouvelle session)
+
+1. Les sources Java ne sont **pas** versionnées (83 Mo) : ré-attacher `lucene-5.2.1-src.tgz` et l'extraire dans
+   `../lucene-src/` (on doit retrouver `../lucene-src/lucene-5.2.1/core/src/java/…`). `archive.apache.org` est
+   bloqué depuis l'environnement cloud.
+2. Récupérer le dépôt (`git clone` du remote ou `git clone lucene-ts.bundle lucene-ts`), puis `npm run typecheck && npm test`.
+3. Prochaines étapes prévues : famille `Sorter` (puis `ArrayUtil.introSort`/`timSort`), puis `store`
+   (`DataInput`, `DataOutput`, `Directory`…), puis `analysis`.
+4. Commiter après chaque classe ou groupe de classes portées et testées ; une couche = plusieurs commits.
+
 ## Commandes
 
 ```
