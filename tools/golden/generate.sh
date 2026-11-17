@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates test/golden/util.json and test/golden/util-refs.json from the ORIGINAL Lucene 5.2.1 Java classes.
+# Regenerates test/golden/util.json, util-refs.json and util-sorters.json from the ORIGINAL Lucene 5.2.1 Java classes.
 #
 # Usage: tools/golden/generate.sh [path/to/lucene-5.2.1] [scratch dir]
 #
@@ -19,7 +19,9 @@ javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
   "$UTIL/BitUtil.java" "$UTIL/MathUtil.java" "$UTIL/UnicodeUtil.java" \
   "$UTIL/StringHelper.java" "$UTIL/BytesRef.java" "$HERE/Golden.java" \
   "$UTIL/ArrayUtil.java" "$UTIL/IntsRef.java" "$UTIL/LongsRef.java" "$UTIL/CharsRef.java" \
-  "$UTIL/BytesRefBuilder.java" "$UTIL/CharsRefBuilder.java" "$UTIL/IntsRefBuilder.java" "$HERE/GoldenRefs.java"
+  "$UTIL/BytesRefBuilder.java" "$UTIL/CharsRefBuilder.java" "$UTIL/IntsRefBuilder.java" "$HERE/GoldenRefs.java" \
+  "$UTIL/Sorter.java" "$UTIL/IntroSorter.java" "$UTIL/InPlaceMergeSorter.java" "$UTIL/TimSorter.java" \
+  "$UTIL/CollectionUtil.java" "$HERE/org/apache/lucene/util/GoldenSorters.java"
 
 # tests.seed makes StringHelper.randomId() and BytesRef.hashCode() reproducible
 java -Dtests.seed=DEADBEEF -cp "$SCRATCH/classes" Golden > "$ROOT/test/golden/util.json"
@@ -29,3 +31,10 @@ echo "wrote $ROOT/test/golden/util.json"
 # object layout; the TypeScript port models a 64-bit JVM with compressed oops, so pin it.
 java -XX:+UseCompressedOops -cp "$SCRATCH/classes" GoldenRefs > "$ROOT/test/golden/util-refs.json"
 echo "wrote $ROOT/test/golden/util-refs.json"
+
+# GoldenSorters lives in package org.apache.lucene.util to reach package-private members of Sorter.
+# Run with Lucene's assertions enabled (-ea, as in Lucene's own test suite): TimSorter.mergeLo/mergeHi
+# call compare() inside an assert, and the TypeScript port evaluates its assertions by default
+# (LUCENE_ASSERTIONS=0 turns them off), so the recorded call counts include those compare() calls.
+java -ea:org.apache.lucene.util... -cp "$SCRATCH/classes" org.apache.lucene.util.GoldenSorters > "$ROOT/test/golden/util-sorters.json"
+echo "wrote $ROOT/test/golden/util-sorters.json"

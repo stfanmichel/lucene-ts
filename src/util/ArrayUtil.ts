@@ -26,13 +26,14 @@
 // arrays of object references (int[][], float[][]) are plain JS arrays that cannot be
 // told apart at runtime, so they get their own names (growBoolean, growRefs, ...).
 //
-// Not ported yet: introSort / timSort (they need the Sorter family).
 
 import {
   ArrayIndexOutOfBoundsException,
   IllegalArgumentException,
   NumberFormatException,
 } from "../errors.js";
+import { ArrayIntroSorter } from "./ArrayIntroSorter.js";
+import { ArrayTimSorter } from "./ArrayTimSorter.js";
 import { lassert } from "./assertions.js";
 import type { Comparable, Comparator } from "./Comparator.js";
 import { Character, Integer } from "./JavaNumbers.js";
@@ -400,5 +401,67 @@ export class ArrayUtil {
     const tmp = arr[i]!;
     arr[i] = arr[j]!;
     arr[j] = tmp;
+  }
+
+  /**
+   * Sorts the given array slice using the Comparator (or natural order when none is given).
+   * This method uses the intro sort algorithm, but falls back to insertion sort for small arrays.
+   * Overloads: (a), (a, comp), (a, fromIndex, toIndex), (a, fromIndex, toIndex, comp).
+   * @param fromIndex start index (inclusive)
+   * @param toIndex end index (exclusive)
+   */
+  static introSort<T>(a: T[], fromIndex: number, toIndex: number, comp: Comparator<T>): void;
+  static introSort<T>(a: T[], comp: Comparator<T>): void;
+  static introSort<T extends Comparable<T>>(a: T[], fromIndex: number, toIndex: number): void;
+  static introSort<T extends Comparable<T>>(a: T[]): void;
+  static introSort<T>(a: T[], x?: number | Comparator<T>, y?: number, comp?: Comparator<T>): void {
+    if (typeof x === "function") {
+      ArrayUtil.introSort(a, 0, a.length, x);
+      return;
+    }
+    if (x === undefined) {
+      ArrayUtil.introSort(a, 0, a.length, ArrayUtil.naturalComparator() as unknown as Comparator<T>);
+      return;
+    }
+    const fromIndex = x;
+    const toIndex = y!;
+    if (toIndex - fromIndex <= 1) return;
+    new ArrayIntroSorter<T>(
+      a,
+      comp ?? (ArrayUtil.naturalComparator() as unknown as Comparator<T>),
+    ).sort(fromIndex, toIndex);
+  }
+
+  // tim sorts:
+
+  /**
+   * Sorts the given array slice using the Comparator (or natural order when none is given).
+   * This method uses the Tim sort algorithm, but falls back to binary sort for small arrays.
+   * Overloads: (a), (a, comp), (a, fromIndex, toIndex), (a, fromIndex, toIndex, comp).
+   * @param fromIndex start index (inclusive)
+   * @param toIndex end index (exclusive)
+   */
+  static timSort<T>(a: T[], fromIndex: number, toIndex: number, comp: Comparator<T>): void;
+  static timSort<T>(a: T[], comp: Comparator<T>): void;
+  static timSort<T extends Comparable<T>>(a: T[], fromIndex: number, toIndex: number): void;
+  static timSort<T extends Comparable<T>>(a: T[]): void;
+  static timSort<T>(a: T[], x?: number | Comparator<T>, y?: number, comp?: Comparator<T>): void {
+    if (typeof x === "function") {
+      ArrayUtil.timSort(a, 0, a.length, x);
+      return;
+    }
+    if (x === undefined) {
+      ArrayUtil.timSort(a, 0, a.length, ArrayUtil.naturalComparator() as unknown as Comparator<T>);
+      return;
+    }
+    const fromIndex = x;
+    const toIndex = y!;
+    if (toIndex - fromIndex <= 1) return;
+    // note: maxTempSlots is a quarter... of the WHOLE array (Java int division), not of the sorted slice
+    new ArrayTimSorter<T>(
+      a,
+      comp ?? (ArrayUtil.naturalComparator() as unknown as Comparator<T>),
+      Math.trunc(a.length / 64),
+    ).sort(fromIndex, toIndex);
   }
 }

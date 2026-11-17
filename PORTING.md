@@ -10,8 +10,7 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
    `../lucene-src/` (on doit retrouver `../lucene-src/lucene-5.2.1/core/src/java/…`). `archive.apache.org` est
    bloqué depuis l'environnement cloud.
 2. Récupérer le dépôt (`git clone` du remote ou `git clone lucene-ts.bundle lucene-ts`), puis `npm run typecheck && npm test`.
-3. Prochaines étapes prévues : famille `Sorter` (puis `ArrayUtil.introSort`/`timSort`), puis `store`
-   (`DataInput`, `DataOutput`, `Directory`…), puis `analysis`.
+3. Prochaines étapes prévues : `store` (`DataInput`, `DataOutput`, `Directory`…), puis `analysis`.
 4. Commiter après chaque classe ou groupe de classes portées et testées ; une couche = plusieurs commits.
 
 ## Commandes
@@ -19,7 +18,7 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
 ```
 npm run typecheck   # tsc --noEmit
 npm test            # node --test via tsx (test/*.test.ts)
-tools/golden/generate.sh [chemin/vers/lucene-5.2.1]   # régénère test/golden/util.json et util-refs.json (JDK requis)
+tools/golden/generate.sh [chemin/vers/lucene-5.2.1]   # régénère test/golden/util.json, util-refs.json et util-sorters.json (JDK requis)
 ```
 
 Note : ici `node_modules/@types/node` et `node_modules/tsx` sont des liens vers des installations
@@ -30,9 +29,10 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 | Package Java (`org.apache.lucene.…`) | État |
 | --- | --- |
 | `util.BitUtil`, `util.MathUtil`, `util.UnicodeUtil`, `util.StringHelper`, `util.BytesRef` | porté, testé contre le Java |
-| `util.ArrayUtil` (sauf `introSort`/`timSort`), `util.IntsRef`, `util.LongsRef`, `util.CharsRef`, `util.BytesRefBuilder`, `util.CharsRefBuilder`, `util.IntsRefBuilder`, `StringHelper.intsRefToBytesRef` | porté, testé contre le Java |
+| `util.ArrayUtil`, `util.IntsRef`, `util.LongsRef`, `util.CharsRef`, `util.BytesRefBuilder`, `util.CharsRefBuilder`, `util.IntsRefBuilder`, `StringHelper.intsRefToBytesRef` | porté, testé contre le Java |
+| `util.Sorter`, `IntroSorter`, `InPlaceMergeSorter`, `TimSorter`, `ArrayIntroSorter`, `ArrayInPlaceMergeSorter`, `ArrayTimSorter`, `CollectionUtil`, `ArrayUtil.introSort`/`timSort` | porté, testé contre le Java (ordre final **et** nombre exact d'appels `compare`/`swap`/`copy`/`save`/`restore`) |
 | `util.RamUsageEstimator` | constantes de taille seulement (`sizeOf` & co à faire) |
-| `ArrayUtil.introSort` / `timSort` | à faire avec la famille `Sorter` (`IntroSorter`, `TimSorter`, `ArrayIntroSorter`…) |
+| `util.OfflineSorter` | à faire avec `store` (dépend de `Directory`/fichiers) |
 | reste de `util` (≈170 fichiers), `store`, `analysis`, `document`, `index`, `search`, `codecs` | à faire |
 
 ## Conventions de portage
@@ -72,6 +72,17 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
   16 octets). Le Java le mesure sur la JVM courante ; les tests de référence sont donc générés avec
   `-XX:+UseCompressedOops`. Les tailles de croissance d'`ArrayUtil.oversize` en dépendent.
 - `BytesRefBuilder.byteAt` renvoie 0..255 (le Java renvoie un `byte` signé).
+- Visibilité package : TypeScript n'a pas de visibilité « package », donc les membres package-private de `Sorter`,
+  `TimSorter`, `IntroSorter`… (`insertionSort`, `mergeInPlace`, `lower`, `rotate`, `quicksort`…) sont publics et marqués
+  `@internal`. Les membres `protected` du Java le restent. `ArrayIntroSorter`, `ArrayInPlaceMergeSorter` et
+  `ArrayTimSorter` (package-private en Java) ne sont pas exportés par `src/index.ts`.
+- `TimSorter.THRESHOLD` (64) masque `Sorter.THRESHOLD` (20) comme en Java ; les sorters génériques inlinent
+  `ArrayUtil.swap` pour éviter un import circulaire.
+- `java.util.List` (listes à accès aléatoire seulement, seul cas accepté par `CollectionUtil`) devient un tableau.
+- **Assertions et comparaisons** : `TimSorter.mergeLo`/`mergeHi` appellent `compare()` dans un `assert`. Le port évalue
+  ses assertions par défaut (`LUCENE_ASSERTIONS=0` les coupe) ; `util-sorters.json` est donc généré avec `java -ea`
+  (comme la suite de tests de Lucene) et les tests de comptage d'appels sont ignorés si les assertions sont coupées.
+  Vérifié dans les deux sens : golden sans `-ea` = port avec `LUCENE_ASSERTIONS=0`, golden avec `-ea` = port par défaut.
 
 - Une écriture hors limites dans un tableau typé est ignorée silencieusement (Java lève
   `ArrayIndexOutOfBoundsException`). Les lectures tronquées de `UTF8toUTF16` lèvent bien l'exception.
