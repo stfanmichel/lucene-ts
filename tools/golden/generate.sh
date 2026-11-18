@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates test/golden/util.json, util-refs.json and util-sorters.json from the ORIGINAL Lucene 5.2.1 Java classes.
+# Regenerates test/golden/util.json, util-refs.json, util-sorters.json and store-data.json from the ORIGINAL Lucene 5.2.1 Java classes.
 #
 # Usage: tools/golden/generate.sh [path/to/lucene-5.2.1] [scratch dir]
 #
@@ -13,6 +13,7 @@ LUCENE="${1:-$ROOT/../lucene-src/lucene-5.2.1}"
 SCRATCH="${2:-$(mktemp -d)}"
 SRC="$LUCENE/core/src/java"
 UTIL="$SRC/org/apache/lucene/util"
+STORE="$SRC/org/apache/lucene/store"
 
 mkdir -p "$SCRATCH/classes"
 javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
@@ -21,7 +22,9 @@ javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
   "$UTIL/ArrayUtil.java" "$UTIL/IntsRef.java" "$UTIL/LongsRef.java" "$UTIL/CharsRef.java" \
   "$UTIL/BytesRefBuilder.java" "$UTIL/CharsRefBuilder.java" "$UTIL/IntsRefBuilder.java" "$HERE/GoldenRefs.java" \
   "$UTIL/Sorter.java" "$UTIL/IntroSorter.java" "$UTIL/InPlaceMergeSorter.java" "$UTIL/TimSorter.java" \
-  "$UTIL/CollectionUtil.java" "$HERE/org/apache/lucene/util/GoldenSorters.java"
+  "$UTIL/CollectionUtil.java" "$HERE/org/apache/lucene/util/GoldenSorters.java" \
+  "$STORE/DataInput.java" "$STORE/DataOutput.java" "$STORE/ByteArrayDataInput.java" "$STORE/ByteArrayDataOutput.java" \
+  "$STORE/InputStreamDataInput.java" "$STORE/OutputStreamDataOutput.java" "$HERE/GoldenStore.java"
 
 # tests.seed makes StringHelper.randomId() and BytesRef.hashCode() reproducible
 java -Dtests.seed=DEADBEEF -cp "$SCRATCH/classes" Golden > "$ROOT/test/golden/util.json"
@@ -38,3 +41,7 @@ echo "wrote $ROOT/test/golden/util-refs.json"
 # (LUCENE_ASSERTIONS=0 turns them off), so the recorded call counts include those compare() calls.
 java -ea:org.apache.lucene.util... -cp "$SCRATCH/classes" org.apache.lucene.util.GoldenSorters > "$ROOT/test/golden/util-sorters.json"
 echo "wrote $ROOT/test/golden/util-sorters.json"
+
+# Data IO classes of the store package (no assertions: ByteArrayDataOutput's assert is covered by a unit test).
+java -cp "$SCRATCH/classes" GoldenStore > "$ROOT/test/golden/store-data.json"
+echo "wrote $ROOT/test/golden/store-data.json"

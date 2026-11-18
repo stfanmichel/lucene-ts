@@ -29,9 +29,7 @@ import { IllegalArgumentException, IOException, NegativeArraySizeException } fro
 import { lassert } from "../util/assertions.js";
 import { BitUtil } from "../util/BitUtil.js";
 import { compareJavaStrings, javaHashOrder } from "../util/JavaCollections.js";
-
-// ignoreBOM: true keeps a leading U+FEFF in the string, as new String(bytes, UTF_8) does.
-const UTF8_DECODER = new TextDecoder("utf-8", { ignoreBOM: true });
+import { decodeUtf8Java } from "../util/JavaUtf8Decoder.js";
 
 /**
  * Abstract base class for performing read operations of Lucene's low-level
@@ -205,7 +203,8 @@ export abstract class DataInput {
     }
     const bytes = new Uint8Array(length);
     this.readBytes(bytes, 0, length);
-    return UTF8_DECODER.decode(bytes);
+    // not TextDecoder: its handling of malformed input differs from Java's
+    return decodeUtf8Java(bytes, 0, length);
   }
 
   /**
