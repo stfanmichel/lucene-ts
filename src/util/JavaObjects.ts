@@ -17,6 +17,8 @@
 
 // Small helpers for java.lang.Object / java.lang.Thread / java.util.Arrays behaviour the port needs.
 
+import { ArrayIndexOutOfBoundsException } from "../errors.js";
+
 const identityHashes = new WeakMap<object, number>();
 let identityHashState = 0x2545f491;
 
@@ -71,4 +73,29 @@ export function arraysEquals(a: Uint8Array | null, b: Uint8Array | null): boolea
   if (a === null || b === null || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
+}
+
+/**
+ * System.arraycopy for byte arrays: bounds are checked up front like the JVM does (nothing is copied when an
+ * ArrayIndexOutOfBoundsException is thrown), with the JDK's messages.
+ */
+export function arraycopy(src: Uint8Array, srcPos: number, dest: Uint8Array, destPos: number, length: number): void {
+  if (srcPos < 0) {
+    throw new ArrayIndexOutOfBoundsException("arraycopy: source index " + srcPos + " out of bounds for byte[" + src.length + "]");
+  }
+  if (destPos < 0) {
+    throw new ArrayIndexOutOfBoundsException("arraycopy: destination index " + destPos + " out of bounds for byte[" + dest.length + "]");
+  }
+  if (length < 0) {
+    throw new ArrayIndexOutOfBoundsException("arraycopy: length " + length + " is negative");
+  }
+  if (srcPos + length > src.length) {
+    throw new ArrayIndexOutOfBoundsException(
+      "arraycopy: last source index " + (srcPos + length) + " out of bounds for byte[" + src.length + "]");
+  }
+  if (destPos + length > dest.length) {
+    throw new ArrayIndexOutOfBoundsException(
+      "arraycopy: last destination index " + (destPos + length) + " out of bounds for byte[" + dest.length + "]");
+  }
+  dest.set(src.subarray(srcPos, srcPos + length), destPos);
 }

@@ -270,6 +270,40 @@ public class GoldenStoreDir {
   }
 
   // ---- RAMOutputStream on its own ----
+  @SuppressWarnings("unchecked")
+  static String execOut(RAMOutputStream o, List<Object> op) {
+    try {
+      switch ((String) op.get(0)) {
+        case "write": applySteps(o, (List<Object>) op.get(1)); return "fp=" + o.getFilePointer();
+        case "fp": return "" + o.getFilePointer();
+        case "crc": return "" + o.getChecksum();
+        case "ram": return "" + o.ramBytesUsed();
+        case "writeToOut": {
+          java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+          OutputStreamDataOutput out = new OutputStreamDataOutput(bos);
+          o.writeTo(out);
+          return hex(bos.toByteArray());
+        }
+        case "writeToBytes": {
+          int offset = (Integer) op.get(1);
+          // the file length is only known after flush; size the array generously
+          byte[] arr = new byte[offset + 6000];
+          Arrays.fill(arr, (byte) 0x55);
+          o.writeTo(arr, offset);
+          int end = arr.length;
+          while (end > 0 && arr[end - 1] == 0x55) end--; // trim the untouched marker tail
+          return hex(Arrays.copyOf(arr, end));
+        }
+        case "reset": o.reset(); return "ok";
+        case "toString": return o.toString();
+        case "close": o.close(); return "ok";
+        default: throw new AssertionError(op.get(0));
+      }
+    } catch (Throwable t) {
+      return exs(t);
+    }
+  }
+
   static void ramOutScripts() throws IOException {
     List<Object> scripts = new ArrayList<Object>();
     for (int sc = 0; sc < 12; sc++) {
@@ -280,41 +314,21 @@ public class GoldenStoreDir {
           : variant == 1 ? new RAMOutputStream(file, checksum) : new RAMOutputStream("nm", file, checksum);
       List<Object> ops = new ArrayList<Object>();
       List<Object> results = new ArrayList<Object>();
-      for (int i = 0; i < 25; i++) {
+      for (int i = 0; i < 27; i++) {
         List<Object> op;
-        String res;
         int k = r.nextInt(9);
-        try {
-          if (k < 3) { List<Object> steps = genSteps(); op = L("write", steps); applySteps(o, steps); res = "fp=" + o.getFilePointer(); }
-          else if (k == 3) { op = L("fp"); res = "" + o.getFilePointer(); }
-          else if (k == 4) { op = L("crc"); res = "" + o.getChecksum(); }
-          else if (k == 5) { op = L("ram"); res = "" + o.ramBytesUsed(); }
-          else if (k == 6) {
-            op = L("writeToOut");
-            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-            OutputStreamDataOutput out = new OutputStreamDataOutput(bos);
-            o.writeTo(out);
-            res = hex(bos.toByteArray());
-          } else if (k == 7) {
-            int offset = r.nextInt(4);
-            op = L("writeToBytes", offset);
-            // the file length is only known after flush; size the array generously
-            byte[] arr = new byte[offset + 6000];
-            Arrays.fill(arr, (byte) 0x55);
-            o.writeTo(arr, offset);
-            int end = arr.length;
-            while (end > 0 && arr[end - 1] == 0x55) end--; // trim the untouched marker tail
-            res = hex(Arrays.copyOf(arr, end));
-          } else { op = L("reset"); o.reset(); res = "ok"; }
-        } catch (Throwable t) {
-          op = L("failed");
-          res = exs(t);
-        }
+        if (i == 25) op = L("toString");
+        else if (i == 26) op = L("close");
+        else if (k < 3) op = L("write", genSteps());
+        else if (k == 3) op = L("fp");
+        else if (k == 4) op = L("crc");
+        else if (k == 5) op = L("ram");
+        else if (k == 6) op = L("writeToOut");
+        else if (k == 7) op = L("writeToBytes", r.nextInt(4));
+        else op = L("reset");
         ops.add(op);
-        results.add(res);
+        results.add(execOut(o, op));
       }
-      ops.add(L("toString")); results.add(o.toString());
-      ops.add(L("close")); o.close(); results.add("ok");
       ops.add(L("lengthAfterClose")); results.add("" + file.getLength());
       scripts.add(L(variant, checksum, ops, results));
     }
@@ -354,37 +368,41 @@ public class GoldenStoreDir {
   }
 
   // ---- locks ----
+  static String execLock(SingleInstanceLockFactory f, Directory dir, Lock[] locks, List<Object> op) {
+    try {
+      int id = (Integer) op.get(1);
+      switch ((String) op.get(0)) {
+        case "make": locks[id] = f.makeLock(dir, (String) op.get(2)); return "ok";
+        case "obtain": return "" + locks[id].obtain();
+        case "close": locks[id].close(); return "ok";
+        case "isLocked": return "" + locks[id].isLocked();
+        case "toString": return normalize(locks[id].toString());
+        default: throw new AssertionError(op.get(0));
+      }
+    } catch (Throwable t) {
+      return exs(t);
+    }
+  }
+
   static void singleInstanceLocks() throws IOException {
     RAMDirectory dir = new RAMDirectory();
     List<Object> scripts = new ArrayList<Object>();
     for (int sc = 0; sc < 6; sc++) {
       SingleInstanceLockFactory f = new SingleInstanceLockFactory();
       Lock[] locks = new Lock[4];
-      String[] lnames = new String[4];
       List<Object> ops = new ArrayList<Object>();
       List<Object> results = new ArrayList<Object>();
       for (int i = 0; i < 60; i++) {
         int id = r.nextInt(4);
-        List<Object> op;
-        String res;
         int k = r.nextInt(8);
-        if (locks[id] == null || k == 0) {
-          String name = r.nextBoolean() ? "w" : "x";
-          op = L("make", id, name);
-          locks[id] = f.makeLock(dir, name);
-          lnames[id] = name;
-          res = "ok";
-        } else {
-          try {
-            if (k < 4) { op = L("obtain", id); res = "" + locks[id].obtain(); }
-            else if (k == 4) { op = L("close", id); locks[id].close(); res = "ok"; }
-            else if (k == 5) { op = L("isLocked", id); res = "" + locks[id].isLocked(); }
-            else { op = L("toString", id); res = normalize(locks[id].toString()); }
-          } catch (Throwable t) { op = L("failed"); res = exs(t); }
-        }
-        if (op.get(0).equals("failed")) { op = L("obtain", id); }
+        List<Object> op;
+        if (locks[id] == null || k == 0) op = L("make", id, r.nextBoolean() ? "w" : "x");
+        else if (k < 4) op = L("obtain", id);
+        else if (k == 4) op = L("close", id);
+        else if (k == 5) op = L("isLocked", id);
+        else op = L("toString", id);
         ops.add(op);
-        results.add(res);
+        results.add(execLock(f, dir, locks, op));
       }
       scripts.add(L(ops, results));
     }
@@ -535,6 +553,21 @@ public class GoldenStoreDir {
   }
 
   // ---- TrackingDirectoryWrapper / FilterDirectory ----
+  static String execTrack(TrackingDirectoryWrapper t, RAMDirectory from, List<Object> op) {
+    try {
+      switch ((String) op.get(0)) {
+        case "create": { IndexOutput o = t.createOutput((String) op.get(1), IOContext.DEFAULT); o.writeByte((byte) 1); o.close(); return "ok"; }
+        case "delete": t.deleteFile((String) op.get(1)); return "ok";
+        case "rename": t.renameFile((String) op.get(1), (String) op.get(2)); return "ok";
+        case "copy": t.copyFrom(from, (String) op.get(1), (String) op.get(2), IOContext.DEFAULT); return "ok";
+        case "created": return "ok";
+        default: throw new AssertionError(op.get(0));
+      }
+    } catch (Throwable e) {
+      return exs(e);
+    }
+  }
+
   static void tracking() throws IOException {
     List<Object> scripts = new ArrayList<Object>();
     for (int sc = 0; sc < 6; sc++) {
@@ -551,18 +584,13 @@ public class GoldenStoreDir {
       for (int i = 0; i < 40; i++) {
         String name = NAMES[r.nextInt(NAMES.length)];
         List<Object> op;
-        String res;
         int k = r.nextInt(6);
-        try {
-          if (k == 0 || k == 1) { op = L("create", name); IndexOutput o = t.createOutput(name, IOContext.DEFAULT); o.writeByte((byte) 1); o.close(); res = "ok"; }
-          else if (k == 2) { op = L("delete", name); t.deleteFile(name); res = "ok"; }
-          else if (k == 3) { op = L("rename", name, NAMES[r.nextInt(NAMES.length)]); t.renameFile((String) op.get(1), (String) op.get(2)); res = "ok"; }
-          else if (k == 4) { op = L("copy", r.nextBoolean() ? "f1" : "f2", name); t.copyFrom(from, (String) op.get(1), name, IOContext.DEFAULT); res = "ok"; }
-          else { op = L("created"); res = "ok"; }
-        } catch (Throwable e) {
-          op = L("failed"); res = exs(e);
-        }
-        if (op.get(0).equals("failed")) op = L("delete", "never-existing");
+        if (k == 0 || k == 1) op = L("create", name);
+        else if (k == 2) op = L("delete", name);
+        else if (k == 3) op = L("rename", name, NAMES[r.nextInt(NAMES.length)]);
+        else if (k == 4) op = L("copy", r.nextBoolean() ? "f1" : "f2", name);
+        else op = L("created");
+        String res = execTrack(t, from, op);
         List<String> created = new ArrayList<String>(t.getCreatedFiles());
         Collections.sort(created);
         String[] l = inner.listAll();

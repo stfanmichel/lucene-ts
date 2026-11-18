@@ -62,7 +62,8 @@ export class RAMDirectory extends BaseDirectory implements Accountable {
   /** Constructs an empty {@link Directory} with the given {@link LockFactory}. */
   constructor(lockFactory: LockFactory);
   constructor(lockFactory?: LockFactory) {
-    super(lockFactory ?? new SingleInstanceLockFactory());
+    // an explicit null/undefined argument reaches BaseDirectory's null check (NullPointerException), as in Java
+    super(arguments.length === 0 ? new SingleInstanceLockFactory() : lockFactory!);
   }
 
   listAll(): string[] {

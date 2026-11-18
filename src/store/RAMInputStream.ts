@@ -18,7 +18,8 @@
 // Port of org.apache.lucene.store.RAMInputStream (Lucene 5.2.1).
 // The anonymous slice subclass is a local class; clone() is DataInput's shallow field copy.
 
-import { EOFException, IllegalArgumentException, IOException } from "../errors.js";
+import { ArrayIndexOutOfBoundsException, EOFException, IllegalArgumentException, IOException, NullPointerException } from "../errors.js";
+import { arraycopy } from "../util/JavaObjects.js";
 import { IndexInput } from "./IndexInput.js";
 import type { RAMFile } from "./RAMFile.js";
 import { RAMOutputStream } from "./RAMOutputStream.js";
@@ -70,7 +71,14 @@ export class RAMInputStream extends IndexInput {
       this.currentBufferIndex++;
       this.switchCurrentBuffer(true);
     }
-    return this.currentBuffer![this.bufferPosition++]!;
+    // currentBuffer[bufferPosition++]: the position advances even when the access fails (negative positions
+    // can only come from seek(negative) on a stream that is not a slice)
+    const pos = this.bufferPosition++;
+    const buf = this.currentBuffer;
+    if (buf === null) throw new NullPointerException('Cannot load from byte/boolean array because "this.currentBuffer" is null');
+    const v = buf[pos];
+    if (v === undefined) throw new ArrayIndexOutOfBoundsException("Index " + pos + " out of bounds for length " + buf.length);
+    return v;
   }
 
   readBytes(b: Uint8Array, offset: number, len: number): void {
@@ -82,7 +90,8 @@ export class RAMInputStream extends IndexInput {
 
       const remainInBuffer = this.bufferLength - this.bufferPosition;
       const bytesToCopy = len < remainInBuffer ? len : remainInBuffer;
-      b.set(this.currentBuffer!.subarray(this.bufferPosition, this.bufferPosition + bytesToCopy), offset); // System.arraycopy
+      if (this.currentBuffer === null) throw new NullPointerException('Cannot read the array length because "src" is null');
+      arraycopy(this.currentBuffer, this.bufferPosition, b, offset, bytesToCopy);
       offset += bytesToCopy;
       len -= bytesToCopy;
       this.bufferPosition += bytesToCopy;

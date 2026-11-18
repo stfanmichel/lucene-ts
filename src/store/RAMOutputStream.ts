@@ -19,6 +19,7 @@
 // Overloads: constructor () / (f, checksum) / (name, f, checksum); writeTo(DataOutput) / writeTo(bytes, offset).
 
 import { IllegalStateException } from "../errors.js";
+import { arraycopy } from "../util/JavaObjects.js";
 import type { Accountable } from "../util/Accountable.js";
 import { Accountables } from "../util/Accountables.js";
 import type { Checksum } from "../zip/Checksum.js";
@@ -88,7 +89,7 @@ export class RAMOutputStream extends IndexOutput implements Accountable {
         length = end - pos;
       }
       if (target instanceof Uint8Array) {
-        target.set(this.file.getBuffer(buffer++).subarray(0, length), bytesUpto); // System.arraycopy
+        arraycopy(this.file.getBuffer(buffer++), 0, target, bytesUpto, length);
         bytesUpto += length;
       } else {
         target.writeBytes(this.file.getBuffer(buffer++), 0, length);
@@ -137,7 +138,7 @@ export class RAMOutputStream extends IndexOutput implements Accountable {
 
       const remainInBuffer = this.currentBuffer!.length - this.bufferPosition;
       const bytesToCopy = len < remainInBuffer ? len : remainInBuffer;
-      this.currentBuffer!.set(b.subarray(offset, offset + bytesToCopy), this.bufferPosition); // System.arraycopy
+      arraycopy(b, offset, this.currentBuffer!, this.bufferPosition, bytesToCopy);
       offset += bytesToCopy;
       len -= bytesToCopy;
       this.bufferPosition += bytesToCopy;
