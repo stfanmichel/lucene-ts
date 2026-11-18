@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates test/golden/util.json, util-refs.json, util-sorters.json and store-data.json from the ORIGINAL Lucene 5.2.1 Java classes.
+# Regenerates test/golden/util.json, util-refs.json, util-sorters.json, store-data.json and store-io.json from the ORIGINAL Lucene 5.2.1 Java classes.
 #
 # Usage: tools/golden/generate.sh [path/to/lucene-5.2.1] [scratch dir]
 #
@@ -24,7 +24,9 @@ javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
   "$UTIL/Sorter.java" "$UTIL/IntroSorter.java" "$UTIL/InPlaceMergeSorter.java" "$UTIL/TimSorter.java" \
   "$UTIL/CollectionUtil.java" "$HERE/org/apache/lucene/util/GoldenSorters.java" \
   "$STORE/DataInput.java" "$STORE/DataOutput.java" "$STORE/ByteArrayDataInput.java" "$STORE/ByteArrayDataOutput.java" \
-  "$STORE/InputStreamDataInput.java" "$STORE/OutputStreamDataOutput.java" "$HERE/GoldenStore.java"
+  "$STORE/InputStreamDataInput.java" "$STORE/OutputStreamDataOutput.java" "$HERE/GoldenStore.java" \
+  "$STORE/BufferedIndexInput.java" "$STORE/BufferedChecksumIndexInput.java" "$STORE/BufferedChecksum.java" \
+  "$STORE/IOContext.java" "$STORE/FlushInfo.java" "$STORE/MergeInfo.java" "$STORE/IndexOutput.java" "$HERE/GoldenStoreIO.java"
 
 # tests.seed makes StringHelper.randomId() and BytesRef.hashCode() reproducible
 java -Dtests.seed=DEADBEEF -cp "$SCRATCH/classes" Golden > "$ROOT/test/golden/util.json"
@@ -45,3 +47,6 @@ echo "wrote $ROOT/test/golden/util-sorters.json"
 # Data IO classes of the store package (no assertions: ByteArrayDataOutput's assert is covered by a unit test).
 java -cp "$SCRATCH/classes" GoldenStore > "$ROOT/test/golden/store-data.json"
 echo "wrote $ROOT/test/golden/store-data.json"
+
+java -cp "$SCRATCH/classes" GoldenStoreIO > "$ROOT/test/golden/store-io.json"
+echo "wrote $ROOT/test/golden/store-io.json"
