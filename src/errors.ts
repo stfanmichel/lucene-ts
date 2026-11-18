@@ -102,3 +102,50 @@ export class EOFException extends IOException {
     this.name = "EOFException";
   }
 }
+
+/** java.lang.NullPointerException */
+export class NullPointerException extends RuntimeException {
+  constructor(message?: string) {
+    super(message);
+    this.name = "NullPointerException";
+  }
+}
+
+/** java.io.FileNotFoundException (message: the file name, as Lucene passes it) */
+export class FileNotFoundException extends IOException {
+  constructor(message?: string) {
+    super(message);
+    this.name = "FileNotFoundException";
+  }
+}
+
+/** java.nio.file.NoSuchFileException (message: the file name, as in Java) */
+export class NoSuchFileException extends IOException {
+  constructor(file?: string) {
+    super(file);
+    this.name = "NoSuchFileException";
+  }
+}
+
+/**
+ * Throwable.addSuppressed: TypeScript errors have no suppressed list, so it is kept in a `suppressed`
+ * array property (see {@link getSuppressed}). Does nothing if either argument is null, like Lucene's
+ * IOUtils.addSuppressed guard.
+ */
+export function addSuppressed(exception: unknown, suppressed: unknown): void {
+  if (exception === null || exception === undefined || suppressed === null || suppressed === undefined) return;
+  if (exception === suppressed) {
+    throw new IllegalArgumentException("Self-suppression not permitted");
+  }
+  const e = exception as { suppressed?: unknown[] };
+  if (e.suppressed === undefined) {
+    Object.defineProperty(e, "suppressed", { value: [], writable: true, enumerable: false, configurable: true });
+  }
+  e.suppressed!.push(suppressed);
+}
+
+/** Throwable.getSuppressed */
+export function getSuppressed(exception: unknown): unknown[] {
+  const s = (exception as { suppressed?: unknown[] } | null)?.suppressed;
+  return s === undefined ? [] : s.slice();
+}

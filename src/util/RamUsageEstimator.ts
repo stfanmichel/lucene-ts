@@ -21,7 +21,7 @@
 // class measures them from the running JVM; here they are fixed to what a
 // 64-bit HotSpot JVM with compressed object references reports, which is also
 // what the golden tests are generated with (java -XX:+UseCompressedOops).
-// sizeOf(), shallowSizeOf() and friends are not ported yet.
+// humanReadableUnits() is ported too. sizeOf(), shallowSizeOf() and friends are not ported yet.
 
 export const RamUsageEstimator = {
   NUM_BYTES_BOOLEAN: 1,
@@ -39,4 +39,37 @@ export const RamUsageEstimator = {
   /** object header + int length, aligned to the object alignment (8) */
   NUM_BYTES_ARRAY_HEADER: 16,
   NUM_BYTES_OBJECT_ALIGNMENT: 8,
+
+  /** One kilobyte bytes. */
+  ONE_KB: 1024,
+  /** One megabyte bytes. */
+  ONE_MB: 1024 * 1024,
+  /** One gigabyte bytes. */
+  ONE_GB: 1024 * 1024 * 1024,
+
+  /**
+   * Returns <code>size</code> in human-readable units (GB, MB, KB or bytes).
+   * Java formats the <code>float</code> quotient with DecimalFormat("0.#") (HALF_EVEN, Locale.ROOT).
+   */
+  humanReadableUnits(bytes: number): string {
+    const fmt = (units: number, suffix: string): string => {
+      // (float) bytes / units: a float division. The float quotient times 10 is exact in a double.
+      const t = Math.fround(Math.fround(bytes) / units) * 10;
+      let n = Math.floor(t);
+      const frac = t - n;
+      if (frac > 0.5 || (frac === 0.5 && n % 2 !== 0)) n += 1;
+      const whole = Math.floor(n / 10);
+      const dec = n - whole * 10;
+      return (dec === 0 ? String(whole) : whole + "." + dec) + " " + suffix;
+    };
+    if (Math.trunc(bytes / RamUsageEstimator.ONE_GB) > 0) {
+      return fmt(RamUsageEstimator.ONE_GB, "GB");
+    } else if (Math.trunc(bytes / RamUsageEstimator.ONE_MB) > 0) {
+      return fmt(RamUsageEstimator.ONE_MB, "MB");
+    } else if (Math.trunc(bytes / RamUsageEstimator.ONE_KB) > 0) {
+      return fmt(RamUsageEstimator.ONE_KB, "KB");
+    } else {
+      return bytes + " bytes";
+    }
+  },
 } as const;
