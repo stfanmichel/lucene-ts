@@ -70,3 +70,35 @@ export class NumberFormatException extends IllegalArgumentException {
     this.name = "NumberFormatException";
   }
 }
+
+/** java.lang.RuntimeException */
+export class RuntimeException extends Error {
+  constructor(message?: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "RuntimeException";
+  }
+}
+
+/** java.lang.NegativeArraySizeException (message: the offending size, as in Java) */
+export class NegativeArraySizeException extends RuntimeException {
+  constructor(message?: string) {
+    super(message);
+    this.name = "NegativeArraySizeException";
+  }
+}
+
+/** java.io.IOException */
+export class IOException extends Error {
+  constructor(message?: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "IOException";
+  }
+}
+
+/** java.io.EOFException */
+export class EOFException extends IOException {
+  constructor(message?: string) {
+    super(message);
+    this.name = "EOFException";
+  }
+}
