@@ -319,6 +319,34 @@ test("Lock.obtainWait: timeouts, number of obtain() calls and failure reasons ma
   }
 });
 
+test("Lock.obtainWait: failureReason is reset by every call (same lock object reused)", () => {
+  const saved = Lock.LOCK_POLL_INTERVAL;
+  Lock.LOCK_POLL_INTERVAL = 1;
+  try {
+    const l = new (class extends ScriptedLock {
+      override obtain(): boolean {
+        const ok = this.calls < this.outcomes.length && this.outcomes[this.calls]!;
+        this.calls++;
+        if (!ok && this.reason !== null && this.calls === 1) this.failureReason = new IOException(this.reason);
+        return ok;
+      }
+    })([false, false, false, false, true], "stale");
+    const res: string[] = [];
+    for (const to of [0, 0, 1, 5]) {
+      let r: string;
+      try {
+        r = String(l.obtainWait(to));
+      } catch (e) {
+        r = lockResult(e);
+      }
+      res.push(r + " calls=" + l.calls);
+    }
+    assert.deepEqual(res.map(unqualify), golden.lockWaitReuse.map(unqualify));
+  } finally {
+    Lock.LOCK_POLL_INTERVAL = saved;
+  }
+});
+
 test("Lock.With: runs the body under the lock and always releases it", () => {
   const saved = Lock.LOCK_POLL_INTERVAL;
   Lock.LOCK_POLL_INTERVAL = 1;

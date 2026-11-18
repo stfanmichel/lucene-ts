@@ -340,10 +340,12 @@ public class GoldenStoreDir {
     byte[][] pool = new byte[4][];
     for (int i = 0; i < pool.length; i++) pool[i] = randomBytes();
     pool[3] = pool[0].clone();
+    pool[2] = new byte[] {'a', 'b', 'c'};
     List<RAMFile> files = new ArrayList<RAMFile>();
     List<Object> contents = new ArrayList<Object>();
-    for (int i = 0; i < 10; i++) {
-      byte[] data = i < 8 ? pool[i % 4] : randomBytes();
+    for (int i = 0; i < 12; i++) {
+      // files 10 and 11: same buffer contents ("abc" + zeros), different lengths
+      byte[] data = i < 8 ? pool[i % 4] : i == 10 ? new byte[] {'a', 'b', 'c', 0, 0} : i == 11 ? new byte[] {'a', 'b', 'c'} : randomBytes();
       RAMFile f = new RAMFile();
       RAMOutputStream o = new RAMOutputStream(f, false);
       // different chunkings of the same bytes must give the same file
@@ -419,11 +421,12 @@ public class GoldenStoreDir {
     final String reason;
     int calls = 0;
     int closes = 0;
+    boolean reasonOnlyFirst = false;
     ScriptedLock(boolean[] outcomes, String reason) { this.outcomes = outcomes; this.reason = reason; }
     @Override public boolean obtain() throws IOException {
       boolean ok = calls < outcomes.length && outcomes[calls];
       calls++;
-      if (!ok && reason != null) failureReason = new IOException(reason);
+      if (!ok && reason != null && (!reasonOnlyFirst || calls == 1)) failureReason = new IOException(reason);
       return ok;
     }
     @Override public void close() { closes++; }
@@ -455,6 +458,17 @@ public class GoldenStoreDir {
       }
     }
     section("lockWait", toJson(cases));
+
+    // the same Lock object used for several obtain(timeout) calls: failureReason must be reset by each call
+    List<Object> reuse = new ArrayList<Object>();
+    ScriptedLock rl = new ScriptedLock(new boolean[] {false, false, false, false, true}, "stale");
+    rl.reasonOnlyFirst = true;
+    for (long to : new long[] {0, 0, 1, 5}) {
+      String res;
+      try { res = "" + rl.obtain(to); } catch (Throwable t) { res = lockResult(t); }
+      reuse.add(res + " calls=" + rl.calls);
+    }
+    section("lockWaitReuse", toJson(reuse));
 
     List<Object> with = new ArrayList<Object>();
     // outcomes, timeout, body kind: "ok" | "throw"
