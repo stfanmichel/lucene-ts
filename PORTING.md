@@ -10,8 +10,9 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
    `../lucene-src/` (on doit retrouver `../lucene-src/lucene-5.2.1/core/src/java/…`). `archive.apache.org` est
    bloqué depuis l'environnement cloud.
 2. Récupérer le dépôt (`git clone` du remote ou `git clone lucene-ts.bundle lucene-ts`), puis `npm run typecheck && npm test`.
-3. Prochaines étapes prévues : fin de `store` (`IndexInput`/`IndexOutput`, `IOContext`, `BufferedIndexInput`,
-   `ChecksumIndexInput`, `Directory`, `RAMDirectory`, verrous…), puis `analysis`.
+3. Prochaines étapes prévues : fin de `store` (`FileSwitchDirectory`, `RateLimiter`/`RateLimitedIndexOutput`,
+   `NRTCachingDirectory`, puis la partie fichiers : `FSDirectory`, `SimpleFS`/`NIOFS`/`MMap`, verrous fichiers — à
+   décider : `node:fs` synchrone), `util.OfflineSorter`, puis `analysis`.
 4. Commiter après chaque classe ou groupe de classes portées et testées ; une couche = plusieurs commits.
 
 ## Commandes
@@ -19,7 +20,7 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
 ```
 npm run typecheck   # tsc --noEmit
 npm test            # node --test via tsx (test/*.test.ts)
-tools/golden/generate.sh [chemin/vers/lucene-5.2.1]   # régénère test/golden/util.json, util-refs.json, util-sorters.json et store-data.json (JDK requis)
+tools/golden/generate.sh [chemin/vers/lucene-5.2.1]   # régénère test/golden/*.json : util, util-refs, util-sorters, store-data, store-io, store-dir (JDK requis)
 ```
 
 Note : ici `node_modules/@types/node` et `node_modules/tsx` sont des liens vers des installations
@@ -33,9 +34,11 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 | `util.ArrayUtil`, `util.IntsRef`, `util.LongsRef`, `util.CharsRef`, `util.BytesRefBuilder`, `util.CharsRefBuilder`, `util.IntsRefBuilder`, `StringHelper.intsRefToBytesRef` | porté, testé contre le Java |
 | `util.Sorter`, `IntroSorter`, `InPlaceMergeSorter`, `TimSorter`, `ArrayIntroSorter`, `ArrayInPlaceMergeSorter`, `ArrayTimSorter`, `CollectionUtil`, `ArrayUtil.introSort`/`timSort` | porté, testé contre le Java (ordre final **et** nombre exact d'appels `compare`/`swap`/`copy`/`save`/`restore`) |
 | `store.DataInput`, `DataOutput`, `ByteArrayDataInput`, `ByteArrayDataOutput`, `InputStreamDataInput`, `OutputStreamDataOutput`, `AlreadyClosedException` (+ `io/*`, `util.JavaCollections`, `util.JavaUtf8Decoder`) | porté, testé contre le Java (octets écrits, valeurs relues, entrées tronquées/malformées, ordre d'itération des maps/sets, UTF-8 exhaustif) |
-| `util.RamUsageEstimator` | constantes de taille seulement (`sizeOf` & co à faire) |
-| `util.OfflineSorter` | à faire avec `store` (dépend de `Directory`/fichiers) |
-| reste de `util` (≈170 fichiers), reste de `store`, `analysis`, `document`, `index`, `search`, `codecs` | à faire |
+| `store.IndexInput`, `IndexOutput`, `RandomAccessInput`, `IOContext` (+ `FlushInfo`, `MergeInfo`), `BufferedIndexInput`, `ChecksumIndexInput`, `BufferedChecksumIndexInput`, `BufferedChecksum` (+ `zip.CRC32`) | porté, testé contre le Java (résultats **et** suite exacte des appels `readInternal`/`seekInternal`) |
+| `store.Directory`, `BaseDirectory`, `FilterDirectory`, `TrackingDirectoryWrapper`, `RAMDirectory`, `RAMFile`, `RAMInputStream`, `RAMOutputStream`, `Lock` (+ `Lock.With`), `LockFactory`, `NoLockFactory`, `SingleInstanceLockFactory`, `LockObtainFailedException`, `LockReleaseFailedException` (+ `util.IOUtils` partiel, `Accountable`, `Accountables`, `AtomicLong`, `ThreadInterruptedException`, `RamUsageEstimator.humanReadableUnits`) | porté, testé contre le Java (scripts aléatoires sur `RAMDirectory`, 64 combinaisons de pannes de `copyFrom` avec exceptions supprimées, verrous, `IOUtils`…) ; tests de mutation : aucun survivant non équivalent |
+| `util.RamUsageEstimator` | constantes de taille + `humanReadableUnits` (`sizeOf` & co à faire) |
+| `util.OfflineSorter` | à faire (dépend de `Directory`) |
+| reste de `util` (≈165 fichiers), reste de `store` (FS, NRTCaching, RateLimiter, FileSwitch), `analysis`, `document`, `index`, `search`, `codecs` | à faire |
 
 ## Conventions de portage
 
@@ -86,6 +89,27 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
   `ReadonlyMap`/`ReadonlySet`.
 - `ByteArrayDataInput` « omet tous les contrôles » : lire au-delà du tableau lève `ArrayIndexOutOfBoundsException`
   (et non `EOFException`), la position ayant déjà avancé comme avec `bytes[pos++]`.
+
+- `Directory` : `Collection<String>` → `Iterable<string>` ; les longueurs de fichier sont des `number` ; la
+  try-with-resources de `copyFrom` est écrite à la main (ressources fermées en ordre inverse, exceptions de
+  `close()` ajoutées en *suppressed* — `addSuppressed`/`getSuppressed` dans `src/errors.ts`).
+- `Lock.obtain(long timeout)` s'appelle `Lock.obtainWait(timeout)` (TypeScript ne peut pas surcharger la méthode
+  abstraite `obtain()` que les sous-classes implémentent) ; `Lock.With` est aussi exporté sous `LockWith`, `doBody()`
+  est générique. `Thread.sleep` bloque le thread (`sleepSync`, `Atomics.wait`).
+- `RAMDirectory` : pas de constructeur `RAMDirectory(FSDirectory, IOContext)` (pas encore de `FSDirectory`) ;
+  `listAll()` renvoie les noms dans l'ordre d'insertion (le `ConcurrentHashMap` Java n'a pas d'ordre spécifié) ;
+  monothread, donc ni `synchronized` ni verrous ; `sizeInBytes` est un `AtomicLong` à valeur `number`.
+- Les membres package-private/protected utilisés par les classes sœurs (`RAMFile.length`, `addBuffer`, `getBuffer`…)
+  sont publics + `@internal`. `getBuffer` lève `IndexOutOfBoundsException` comme `ArrayList.get`.
+- `System.arraycopy` : `arraycopy` (`src/util/JavaObjects.ts`) vérifie les bornes avant de copier et lève
+  `ArrayIndexOutOfBoundsException` avec les messages du JDK ; `RAMInputStream.readByte` reproduit aussi l'AIOOBE / NPE
+  d'un `seek` négatif hors slice (messages du JDK 21, seule la classe est comparée dans les tests).
+- `Object.toString()` / `hashCode()` par défaut → `identityHashCode`/`objectToString` (`JavaObjects.ts`) : nom de classe
+  sans paquet + hash d'identité, jamais comparable octet pour octet avec Java.
+- `IOUtils` : seules les fonctions `Closeable`/`Directory`/`reThrow*` sont portées (pas de `Path`/`Files`) ; les
+  surcharges varargs/`Iterable` sont fusionnées. Toute `Error` autre qu'`IOException` est « non contrôlée »
+  (il n'y a pas d'équivalent de `java.lang.Exception`).
+- `Accountable.getChildResources()` renvoie un tableau en lecture seule ; `System.lineSeparator()` = `"\n"`.
 
 ## Écarts connus avec le Java
 
