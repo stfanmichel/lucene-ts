@@ -10,7 +10,8 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
    `../lucene-src/` (on doit retrouver `../lucene-src/lucene-5.2.1/core/src/java/…`). `archive.apache.org` est
    bloqué depuis l'environnement cloud.
 2. Récupérer le dépôt (`git clone` du remote ou `git clone lucene-ts.bundle lucene-ts`), puis `npm run typecheck && npm test`.
-3. Prochaines étapes prévues : `store` (`DataInput`, `DataOutput`, `Directory`…), puis `analysis`.
+3. Prochaines étapes prévues : fin de `store` (`IndexInput`/`IndexOutput`, `IOContext`, `BufferedIndexInput`,
+   `ChecksumIndexInput`, `Directory`, `RAMDirectory`, verrous…), puis `analysis`.
 4. Commiter après chaque classe ou groupe de classes portées et testées ; une couche = plusieurs commits.
 
 ## Commandes
@@ -18,7 +19,7 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
 ```
 npm run typecheck   # tsc --noEmit
 npm test            # node --test via tsx (test/*.test.ts)
-tools/golden/generate.sh [chemin/vers/lucene-5.2.1]   # régénère test/golden/util.json, util-refs.json et util-sorters.json (JDK requis)
+tools/golden/generate.sh [chemin/vers/lucene-5.2.1]   # régénère test/golden/util.json, util-refs.json, util-sorters.json et store-data.json (JDK requis)
 ```
 
 Note : ici `node_modules/@types/node` et `node_modules/tsx` sont des liens vers des installations
@@ -31,9 +32,10 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 | `util.BitUtil`, `util.MathUtil`, `util.UnicodeUtil`, `util.StringHelper`, `util.BytesRef` | porté, testé contre le Java |
 | `util.ArrayUtil`, `util.IntsRef`, `util.LongsRef`, `util.CharsRef`, `util.BytesRefBuilder`, `util.CharsRefBuilder`, `util.IntsRefBuilder`, `StringHelper.intsRefToBytesRef` | porté, testé contre le Java |
 | `util.Sorter`, `IntroSorter`, `InPlaceMergeSorter`, `TimSorter`, `ArrayIntroSorter`, `ArrayInPlaceMergeSorter`, `ArrayTimSorter`, `CollectionUtil`, `ArrayUtil.introSort`/`timSort` | porté, testé contre le Java (ordre final **et** nombre exact d'appels `compare`/`swap`/`copy`/`save`/`restore`) |
+| `store.DataInput`, `DataOutput`, `ByteArrayDataInput`, `ByteArrayDataOutput`, `InputStreamDataInput`, `OutputStreamDataOutput`, `AlreadyClosedException` (+ `io/*`, `util.JavaCollections`, `util.JavaUtf8Decoder`) | porté, testé contre le Java (octets écrits, valeurs relues, entrées tronquées/malformées, ordre d'itération des maps/sets, UTF-8 exhaustif) |
 | `util.RamUsageEstimator` | constantes de taille seulement (`sizeOf` & co à faire) |
 | `util.OfflineSorter` | à faire avec `store` (dépend de `Directory`/fichiers) |
-| reste de `util` (≈170 fichiers), `store`, `analysis`, `document`, `index`, `search`, `codecs` | à faire |
+| reste de `util` (≈170 fichiers), reste de `store`, `analysis`, `document`, `index`, `search`, `codecs` | à faire |
 
 ## Conventions de portage
 
@@ -61,6 +63,29 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 - Propriété système `tests.seed` → variable d'environnement `TESTS_SEED`.
 - Cycles d'import (`BytesRef` ↔ `UnicodeUtil` ↔ `StringHelper`) : aucune valeur de l'autre module n'est
   utilisée à l'évaluation du module ; les constantes qui en dépendent sont paresseuses (`UnicodeUtil.BIG_TERM`).
+
+## Conventions propres à `store`
+
+- E/S **synchrones** (comme en Java). `java.io` est réduit à ce que Lucene utilise : `src/io/` (`Closeable`,
+  `InputStream`, `OutputStream`, `ByteArrayInputStream`, `ByteArrayOutputStream`) ; `IOException`/`EOFException`
+  dans `src/errors.ts`.
+- Un `long` qui est une **donnée** (`readLong`, `readVLong`, `readZLong`, `writeLong`…) est un `bigint` ; un `long` qui
+  est une **position/longueur/compteur d'octets** (`skipBytes`, `length()`, `getFilePointer()`, `seek()`…) devient un
+  `number` (toujours < 2^53).
+- `readByte()` renvoie 0..255 ; `writeByte(b)` garde les 8 bits de poids faible (comme le cast `(byte)`).
+- `DataInput.readBytes(b, offset, len, useBuffer?)` fusionne les deux surcharges Java ; `DataOutput.writeBytes(b, length)`
+  (2 arguments) n'est pas porté : écrire `writeBytes(b, 0, length)`.
+- `DataInput.clone()` est une copie superficielle de tous les champs (`Object.clone`).
+- `readString` n'utilise **pas** `TextDecoder` : sa gestion des octets UTF-8 invalides diffère du JDK (ED A0 80 → 1 U+FFFD
+  en Java, 3 en WHATWG). `decodeUtf8Java` (`src/util/JavaUtf8Decoder.ts`) reprend l'algorithme du JDK 21, vérifié sur
+  toutes les séquences de 1 et 2 octets et sur des familles de 3 à 6 octets (empreinte SHA-256 des résultats Java).
+- Les `HashMap`/`HashSet` que Java renvoie (`readStringStringMap`, `readStringSet`, `readMapOfStrings`/`readSetOfStrings`
+  au-delà de 10 éléments) sont des `Map`/`Set` JS **construits dans l'ordre d'itération de Java**
+  (`javaHashOrder`, `src/util/JavaCollections.ts`) ; jusqu'à 10 éléments Java renvoie un `TreeMap`/`TreeSet`
+  (tri par code UTF-16, `compareJavaStrings`). Ces résultats ne sont pas modifiables côté Java ; côté TS le type est
+  `ReadonlyMap`/`ReadonlySet`.
+- `ByteArrayDataInput` « omet tous les contrôles » : lire au-delà du tableau lève `ArrayIndexOutOfBoundsException`
+  (et non `EOFException`), la position ayant déjà avancé comme avec `bytes[pos++]`.
 
 ## Écarts connus avec le Java
 
@@ -94,5 +119,5 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 
 - Tests unitaires : `test/util-*.test.ts`.
 - Tests différentiels : `test/golden-util*.test.ts` comparent le port à des valeurs produites par les classes
-  Java d'origine (`tools/golden/Golden.java`, graine `tests.seed=DEADBEEF`). Pour chaque nouvelle couche
+  Java d'origine (`tools/golden/Golden.java`, graine `tests.seed=DEADBEEF` ; `GoldenStore.java` pour `store`). Pour chaque nouvelle couche
   portée, étendre `Golden.java` plutôt que d'écrire les valeurs attendues à la main.
