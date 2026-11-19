@@ -79,6 +79,14 @@ export class RuntimeException extends Error {
   }
 }
 
+/** java.util.NoSuchElementException */
+export class NoSuchElementException extends RuntimeException {
+  constructor(message?: string) {
+    super(message);
+    this.name = "NoSuchElementException";
+  }
+}
+
 /** java.lang.NegativeArraySizeException (message: the offending size, as in Java) */
 export class NegativeArraySizeException extends RuntimeException {
   constructor(message?: string) {
@@ -158,6 +166,62 @@ export class AtomicMoveNotSupportedException extends FileSystemException {
   constructor(source: string, target: string, reason: string) {
     super(source, target, reason);
     this.name = "AtomicMoveNotSupportedException";
+  }
+}
+
+/** java.nio.file.FileAlreadyExistsException (message: the file name, as in Java) */
+export class FileAlreadyExistsException extends FileSystemException {
+  constructor(file: string | null = null, other: string | null = null, reason: string | null = null) {
+    super(file, other, reason);
+    this.name = "FileAlreadyExistsException";
+  }
+}
+
+/** java.nio.file.DirectoryNotEmptyException (message: the directory name) */
+export class DirectoryNotEmptyException extends FileSystemException {
+  constructor(dir: string) {
+    super(dir);
+    this.name = "DirectoryNotEmptyException";
+  }
+}
+
+/** java.nio.file.NotDirectoryException (message: the file name) */
+export class NotDirectoryException extends FileSystemException {
+  constructor(file: string) {
+    super(file);
+    this.name = "NotDirectoryException";
+  }
+}
+
+/** java.nio.file.AccessDeniedException (message: the file name when there is no reason) */
+export class AccessDeniedException extends FileSystemException {
+  constructor(file: string | null = null, other: string | null = null, reason: string | null = null) {
+    super(file, other, reason);
+    this.name = "AccessDeniedException";
+  }
+}
+
+/** java.nio.channels.ClosedChannelException */
+export class ClosedChannelException extends IOException {
+  constructor() {
+    super();
+    this.name = "ClosedChannelException";
+  }
+}
+
+/** java.nio.channels.OverlappingFileLockException (an IllegalStateException in Java) */
+export class OverlappingFileLockException extends IllegalStateException {
+  constructor() {
+    super();
+    this.name = "OverlappingFileLockException";
+  }
+}
+
+/** java.nio.BufferUnderflowException (a RuntimeException in Java) */
+export class BufferUnderflowException extends RuntimeException {
+  constructor() {
+    super();
+    this.name = "BufferUnderflowException";
   }
 }
 
