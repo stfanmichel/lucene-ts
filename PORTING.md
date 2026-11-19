@@ -10,9 +10,8 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
    `../lucene-src/` (on doit retrouver `../lucene-src/lucene-5.2.1/core/src/java/…`). `archive.apache.org` est
    bloqué depuis l'environnement cloud.
 2. Récupérer le dépôt (`git clone` du remote ou `git clone lucene-ts.bundle lucene-ts`), puis `npm run typecheck && npm test`.
-3. Prochaines étapes prévues : fin de `store` (`FileSwitchDirectory`, `RateLimiter`/`RateLimitedIndexOutput`,
-   `NRTCachingDirectory`, puis la partie fichiers : `FSDirectory`, `SimpleFS`/`NIOFS`/`MMap`, verrous fichiers — à
-   décider : `node:fs` synchrone), `util.OfflineSorter`, puis `analysis`.
+3. Prochaines étapes prévues : fin de `store` (partie fichiers : `FSDirectory`, `SimpleFS`/`NIOFS`/`MMap`, verrous
+   fichiers, `VerifyingLockFactory`… — à décider : `node:fs` synchrone), `util.OfflineSorter`, puis `analysis`.
 4. Commiter après chaque classe ou groupe de classes portées et testées ; une couche = plusieurs commits.
 
 ## Commandes
@@ -36,6 +35,7 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 | `store.DataInput`, `DataOutput`, `ByteArrayDataInput`, `ByteArrayDataOutput`, `InputStreamDataInput`, `OutputStreamDataOutput`, `AlreadyClosedException` (+ `io/*`, `util.JavaCollections`, `util.JavaUtf8Decoder`) | porté, testé contre le Java (octets écrits, valeurs relues, entrées tronquées/malformées, ordre d'itération des maps/sets, UTF-8 exhaustif) |
 | `store.IndexInput`, `IndexOutput`, `RandomAccessInput`, `IOContext` (+ `FlushInfo`, `MergeInfo`), `BufferedIndexInput`, `ChecksumIndexInput`, `BufferedChecksumIndexInput`, `BufferedChecksum` (+ `zip.CRC32`) | porté, testé contre le Java (résultats **et** suite exacte des appels `readInternal`/`seekInternal`) |
 | `store.Directory`, `BaseDirectory`, `FilterDirectory`, `TrackingDirectoryWrapper`, `RAMDirectory`, `RAMFile`, `RAMInputStream`, `RAMOutputStream`, `Lock` (+ `Lock.With`), `LockFactory`, `NoLockFactory`, `SingleInstanceLockFactory`, `LockObtainFailedException`, `LockReleaseFailedException` (+ `util.IOUtils` partiel, `Accountable`, `Accountables`, `AtomicLong`, `ThreadInterruptedException`, `RamUsageEstimator.humanReadableUnits`) | porté, testé contre le Java (scripts aléatoires sur `RAMDirectory`, 64 combinaisons de pannes de `copyFrom` avec exceptions supprimées, verrous, `IOUtils`…) ; tests de mutation : aucun survivant non équivalent |
+| `store.OutputStreamIndexOutput`, `RateLimiter` (+ `SimpleRateLimiter`), `RateLimitedIndexOutput`, `FileSwitchDirectory`, `NRTCachingDirectory` (+ `io.BufferedOutputStream`/`FilterOutputStream`, `zip.CheckedOutputStream`, `errors.FileSystemException` & co, `JavaNumbers.doubleToString`) | porté, testé contre le Java (suite exacte des écritures vers le flux sous-jacent, pannes de write/flush/close avec exceptions supprimées imbriquées, décisions de cache NRT, `sync`/`close` transmis aux délégués, `Double.toString` du JDK) ; mutations : aucun survivant non équivalent |
 | `util.RamUsageEstimator` | constantes de taille + `humanReadableUnits` (`sizeOf` & co à faire) |
 | `util.OfflineSorter` | à faire (dépend de `Directory`) |
 | reste de `util` (≈165 fichiers), reste de `store` (FS, NRTCaching, RateLimiter, FileSwitch), `analysis`, `document`, `index`, `search`, `codecs` | à faire |
@@ -109,6 +109,16 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 - `IOUtils` : seules les fonctions `Closeable`/`Directory`/`reThrow*` sont portées (pas de `Path`/`Files`) ; les
   surcharges varargs/`Iterable` sont fusionnées. Toute `Error` autre qu'`IOException` est « non contrôlée »
   (il n'y a pas d'équivalent de `java.lang.Exception`).
+- `java.io` : `OutputStream` gagne `flush()` ; `BufferedOutputStream`/`FilterOutputStream`/`CheckedOutputStream` reproduisent la
+  sémantique du JDK 21 (écritures directes quand `len >= taille du tampon`, `close()` idempotent qui ferme le flux
+  même si `flush()` échoue, message `Range [off, off + len) out of bounds for length n`). `tryWithResource`
+  (`JavaObjects.ts`) émule un try-with-resources à une ressource.
+- `Double.toString` → `doubleToString` (chiffres les plus courts ; deux chiffres significatifs quand un seul suffit, comme
+  le JDK ≥ 19 : `4.9E-324`). `(long) double` → `doubleToLong` (bigint, saturé). `System.nanoTime` : bigint (`RateLimiter`),
+  `Thread.sleep` : `sleepSync`. Les `long` d'octets ≥ 2^53 sont approximés (ex. `getMinPauseCheckBytes()` saturé).
+- `FileSwitchDirectory`/`NRTCachingDirectory.listAll()` rendent l'ordre d'un `HashSet` Java (`javaHashOrder`) à partir de
+  l'ordre d'insertion ; les tests comparent des listes triées car `RAMDirectory.listAll()` n'a pas d'ordre spécifié.
+- `BaseDirectory.isOpen` est public (+ `@internal`) car `NRTCachingDirectory` le lit.
 - `Accountable.getChildResources()` renvoie un tableau en lecture seule ; `System.lineSeparator()` = `"\n"`.
 
 ## Écarts connus avec le Java

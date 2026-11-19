@@ -526,3 +526,16 @@ test("NRTCachingDirectory.close copies the cached files to the delegate before c
   }
   assert.ok(golden.nrtCloseSnapshot.some((c: any) => c[1] !== "[]"), "some files are cached at close time");
 });
+
+test("CheckedOutputStream.write(int): the checksum only sees bytes the underlying stream accepted", () => {
+  // (JDK source: out.write(b); cksum.update(b);) — not reachable through BufferedOutputStream, which only writes arrays
+  const crc = new CRC32();
+  const s = new CheckedOutputStream(new Rec(1, false, false), crc);
+  assert.throws(() => s.write(65), /write failed/);
+  assert.equal(crc.getValue(), 0n);
+  s.write(66);
+  const ref = new CRC32();
+  ref.update(66);
+  assert.equal(crc.getValue(), ref.getValue());
+  assert.equal(s.getChecksum(), crc);
+});
