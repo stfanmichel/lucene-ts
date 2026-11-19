@@ -167,8 +167,14 @@ export function doubleToString(d: number): string {
   if (d === 0) return Object.is(d, -0) ? "-0.0" : "0.0";
   const sign = d < 0 ? "-" : "";
   const abs = Math.abs(d);
-  const [mant, exp] = abs.toExponential().split("e") as [string, string];
-  const digits = mant.replace(".", "");
+  let [mant, exp] = abs.toExponential().split("e") as [string, string];
+  if (mant.length === 1) {
+    // JDK 19+ never prints a single significant digit when two digits identify the value: it then picks the
+    // two-digit decimal closest to the exact value (Double.MIN_VALUE prints as 4.9E-324, not 5.0E-324).
+    const two = abs.toExponential(1);
+    if (Number(two) === abs) [mant, exp] = two.split("e") as [string, string];
+  }
+  const digits = mant.replace(".", "").replace(/0+$/, "") || "0";
   const e = Number(exp);
   if (abs >= 1e-3 && abs < 1e7) {
     if (e >= 0) {
