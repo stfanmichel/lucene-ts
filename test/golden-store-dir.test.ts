@@ -431,7 +431,14 @@ class FDir extends FilterDirectory {
 }
 
 const suppressedString = (e: unknown): string =>
-  "[" + getSuppressed(e).map((x) => (x as Error).name + ":" + (x as Error).message).join(", ") + "]";
+  "[" +
+  getSuppressed(e)
+    .map((x) => {
+      const n = getSuppressed(x);
+      return (x as Error).name + ":" + (x as Error).message + (n.length > 0 ? "{" + suppressedString(x) + "}" : "");
+    })
+    .join(", ") +
+  "]";
 
 test("Directory.copyFrom: failures, suppressed exceptions and clean-up match Lucene 5.2.1 (64 combinations)", () => {
   for (const [mask, expected] of golden.copyFrom as [number, string][]) {

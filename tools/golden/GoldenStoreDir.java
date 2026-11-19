@@ -26,11 +26,13 @@ public class GoldenStoreDir {
     return "EX:" + t.getClass().getSimpleName() + ":" + (m == null ? "" : m);
   }
 
+  /** "[Class:msg, Class:msg{nested suppressed}]" (nested suppressed exceptions are shown recursively) */
   static String suppressed(Throwable t) {
     StringBuilder s = new StringBuilder("[");
     for (Throwable x : t.getSuppressed()) {
       if (s.length() > 1) s.append(", ");
       s.append(x.getClass().getSimpleName()).append(':').append(x.getMessage());
+      if (x.getSuppressed().length > 0) s.append('{').append(suppressed(x)).append('}');
     }
     return s.append(']').toString();
   }

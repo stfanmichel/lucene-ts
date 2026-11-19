@@ -38,8 +38,9 @@ export class FilterOutputStream implements OutputStream {
       return;
     }
     // The default FilterOutputStream implementation writes byte by byte.
-    if (((off! | len! | (b.length - (len! + off!)) | (off! + len!)) < 0)) {
-      throw new IndexOutOfBoundsException();
+    // Objects.checkFromIndexSize(off, len, b.length), as in JDK 21
+    if ((off! | len!) < 0 || len! > b.length - off!) {
+      throw new IndexOutOfBoundsException("Range [" + off + ", " + off + " + " + len + ") out of bounds for length " + b.length);
     }
     for (let i = 0; i < len!; i++) {
       this.write(b[off! + i]!);

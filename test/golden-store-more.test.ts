@@ -10,7 +10,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { IOException, NoSuchFileException } from "../src/errors.js";
+import { getSuppressed, IOException, NoSuchFileException } from "../src/errors.js";
+import { BufferedOutputStream } from "../src/io/BufferedOutputStream.js";
+import { FilterOutputStream } from "../src/io/FilterOutputStream.js";
+import { CheckedOutputStream } from "../src/zip/CheckedOutputStream.js";
+import { CRC32 } from "../src/zip/CRC32.js";
 import type { OutputStream } from "../src/io/OutputStream.js";
 import { Directory } from "../src/store/Directory.js";
 import { FileSwitchDirectory } from "../src/store/FileSwitchDirectory.js";
@@ -28,6 +32,7 @@ import { RAMOutputStream } from "../src/store/RAMOutputStream.js";
 import { RateLimitedIndexOutput } from "../src/store/RateLimitedIndexOutput.js";
 import { RateLimiter, SimpleRateLimiter } from "../src/store/RateLimiter.js";
 import { Accountables } from "../src/util/Accountables.js";
+import { sleepSync } from "../src/util/JavaObjects.js";
 import { doubleToString } from "../src/util/JavaNumbers.js";
 import { compareJavaStrings } from "../src/util/JavaCollections.js";
 import { hexToBytes, toHex } from "./helpers.js";
@@ -40,8 +45,16 @@ function exs(e: unknown): string {
   assert.ok(e instanceof Error, "thrown value is not an Error: " + String(e));
   return "EX:" + e.name + ":" + e.message;
 }
+/** "[Class:msg, Class:msg{nested suppressed}]", like the Java harness */
 const suppressedString = (e: unknown): string =>
-  "[" + ((e as { suppressed?: Error[] }).suppressed ?? []).map((x) => x.name + ":" + x.message).join(", ") + "]";
+  "[" +
+  getSuppressed(e)
+    .map((x) => {
+      const n = getSuppressed(x);
+      return (x as Error).name + ":" + (x as Error).message + (n.length > 0 ? "{" + suppressedString(x) + "}" : "");
+    })
+    .join(", ") +
+  "]";
 const sorted = (l: string[]): string => "[" + [...l].sort(compareJavaStrings).join(", ") + "]";
 const normalize = (s: string): string => s.replace(/(?:[\w$]+[.$])*([\w$]+)@[0-9a-f]+/g, "$1@H");
 
@@ -162,6 +175,7 @@ test("OutputStreamIndexOutput: bytes reaching the stream, checksum and failures 
   assert.ok(all.some((r) => r.includes("EX:IOException:flush failed")));
   assert.ok(all.some((r) => r.includes("EX:IOException:close failed")));
   assert.ok(all.some((r) => r.includes("suppressed=[IOException:")), "suppressed exception on close");
+  assert.ok(all.some((r) => r.includes("{[IOException:")), "nested suppressed exceptions");
 });
 
 test("OutputStreamIndexOutput: buffer size must be positive", () => {
@@ -246,6 +260,13 @@ test("SimpleRateLimiter.pause really sleeps (1 MB/s: 50000 bytes take ~48 ms) an
   // being behind schedule: no pause at all and the clock restarts from now
   const slow = new SimpleRateLimiter(1000);
   assert.equal(slow.pause(1), 0);
+
+  // ... "restarts from now": after a late (zero) pause, the next pause is measured from that moment
+  const l2 = new SimpleRateLimiter(1);
+  sleepSync(100);
+  assert.equal(l2.pause(1), 0);
+  const paused2 = l2.pause(50000);
+  assert.ok(paused2 >= 40e6 && paused2 <= 1e9, `second pause ${paused2} ns`);
 });
 
 test("Double.toString emulation matches the JDK (special values, boundaries 1e-3 / 1e7, random bit patterns)", () => {
@@ -425,4 +446,83 @@ test("NRTCachingDirectory: file in both cache and delegate, and a doCacheWrite o
   o2.writeByte(1);
   o2.close();
   assert.deepEqual([sorted(never.listCachedFiles()), sorted(never.listAll()), String(never.fileLength("n"))], golden.nrtNever);
+});
+
+// ---------------------------------------------------------------- JDK streams, used on their own
+function execStream(s: OutputStream, crc: CRC32, rec: Rec, op: Op): string {
+  let res: string;
+  try {
+    switch (op[0]) {
+      case "wb": s.write(op[1]); res = "ok"; break;
+      case "wbs": s.write(hexToBytes(op[3]), op[1], op[2]); res = "ok"; break;
+      case "flush": s.flush(); res = "ok"; break;
+      case "close": s.close(); res = "ok"; break;
+      case "crc": res = String(crc.getValue()); break;
+      default: throw new Error("bad stream op " + op[0]);
+    }
+  } catch (e) {
+    res = (e as Error).name === "ArrayIndexOutOfBoundsException" ? "EX:" + (e as Error).name : exs(e) + " suppressed=" + suppressedString(e);
+  }
+  return res + " log=[" + rec.drain() + "]";
+}
+
+test("BufferedOutputStream / CheckedOutputStream / FilterOutputStream behave like the JDK (writes, bounds, close with failing flush/close)", () => {
+  golden.javaStreams.forEach(([kind, cfg, bufSize, ops, results]: [number, number, number, Op[], string[]], sc: number) => {
+    const rec = new Rec(cfg === 1 ? 4 : 0, cfg === 2 || cfg === 4, cfg === 3 || cfg === 4);
+    const crc = new CRC32();
+    const s: OutputStream = kind === 0 ? new CheckedOutputStream(rec, crc) : kind === 1 ? new FilterOutputStream(rec) : new BufferedOutputStream(rec, bufSize);
+    ops.forEach((op, i) =>
+      assert.equal(execStream(s, crc, rec, op), results[i], `script ${sc} (kind ${kind}, cfg ${cfg}, buf ${bufSize}) op ${i} ${JSON.stringify(op).slice(0, 80)}`));
+  });
+  const all: string[] = golden.javaStreams.flatMap((x: any) => x[4]);
+  assert.ok(all.some((r) => r.startsWith("EX:IndexOutOfBoundsException")), "bounds check of FilterOutputStream.write");
+  assert.ok(all.some((r) => r.includes("EX:IOException:close failed suppressed=[IOException:flush failed]")), "flush failure suppressed by close failure");
+});
+
+// ---------------------------------------------------------------- what the wrappers hand to their delegates
+class Spy extends FilterDirectory {
+  log = "";
+  constructor(inner: Directory) {
+    super(inner);
+  }
+  override sync(names: Iterable<string>): void {
+    const l = [...names];
+    this.log += "sync[" + l.join(", ") + "] ";
+    this.in.sync(l);
+  }
+  override close(): void {
+    const l = this.in.listAll().sort(compareJavaStrings);
+    this.log += ("atClose=[" + l.map((n) => n + ":" + this.in.fileLength(n) + " ").join("")).trim() + "] ";
+    this.in.close();
+  }
+  drain(): string {
+    const s = this.log.trim();
+    this.log = "";
+    return s;
+  }
+}
+
+test("FileSwitchDirectory.sync hands each name to the right directory (order kept)", () => {
+  const exts = new Set(["fdt", "fdx", "tim"]);
+  for (const [names, expected] of golden.fileSwitchSync as [string[], string][]) {
+    const p = new Spy(new RAMDirectory());
+    const s = new Spy(new RAMDirectory());
+    new FileSwitchDirectory(exts, p, s, false).sync(names);
+    assert.equal(`p=${p.drain()} s=${s.drain()}`, expected, JSON.stringify(names));
+  }
+  assert.ok(golden.fileSwitchSync.some((c: any) => c[0].length >= 2));
+});
+
+test("NRTCachingDirectory.close copies the cached files to the delegate before closing it", () => {
+  for (const [ops, cached, expected] of golden.nrtCloseSnapshot as [Op[], string, string][]) {
+    const spy = new Spy(new RAMDirectory());
+    const nrt = new NRTCachingDirectory(spy, 0.001, 0.01);
+    const locks = new Map<string, Lock>();
+    for (const op of ops) common(nrt, op, locks);
+    assert.equal(sorted(nrt.listCachedFiles()), cached);
+    spy.drain();
+    nrt.close();
+    assert.equal(spy.drain(), expected, JSON.stringify(ops).slice(0, 100));
+  }
+  assert.ok(golden.nrtCloseSnapshot.some((c: any) => c[1] !== "[]"), "some files are cached at close time");
 });

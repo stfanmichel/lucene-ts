@@ -442,12 +442,118 @@ public class GoldenStoreMore {
     section("nrtNever", toJson(L(sorted(never.listCachedFiles()), sorted(never.listAll()), "" + never.fileLength("n"))));
   }
 
+
+  // ---------------------------------------------------------------- the JDK streams on their own
+  static String execStream(java.io.OutputStream s, java.util.zip.CRC32 crc, Rec rec, List<Object> op) {
+    String res;
+    try {
+      switch ((String) op.get(0)) {
+        case "wb": s.write((Integer) op.get(1)); res = "ok"; break;
+        case "wbs": s.write(GoldenStore.unhex((String) op.get(3)), (Integer) op.get(1), (Integer) op.get(2)); res = "ok"; break;
+        case "flush": s.flush(); res = "ok"; break;
+        case "close": s.close(); res = "ok"; break;
+        case "crc": res = "" + crc.getValue(); break;
+        default: throw new AssertionError(op.get(0));
+      }
+    } catch (Throwable t) {
+      String c = t.getClass().getSimpleName();
+      // the message of an AIOOBE from System.arraycopy differs between JDKs: only its class is compared
+      res = c.equals("ArrayIndexOutOfBoundsException") ? "EX:" + c : exs(t) + " suppressed=" + GoldenStoreDir.suppressed(t);
+    }
+    return res + " log=[" + rec.drain() + "]";
+  }
+
+  static void javaStreams() {
+    List<Object> scripts = new ArrayList<Object>();
+    for (int sc = 0; sc < 30; sc++) {
+      int kind = sc % 3; // 0: CheckedOutputStream, 1: FilterOutputStream, 2: BufferedOutputStream
+      int cfg = (sc / 3) % 5;
+      int bufSize = new int[] {1, 3, 8, 8192}[(sc / 15 + sc) % 4];
+      Rec rec = new Rec(cfg == 1 ? 4 : 0, cfg == 2 || cfg == 4, cfg == 3 || cfg == 4);
+      java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+      java.io.OutputStream s = kind == 0 ? new java.util.zip.CheckedOutputStream(rec, crc)
+          : kind == 1 ? new java.io.FilterOutputStream(rec) : new java.io.BufferedOutputStream(rec, bufSize);
+      List<Object> ops = new ArrayList<Object>();
+      List<Object> results = new ArrayList<Object>();
+      for (int i = 0; i < 34; i++) {
+        List<Object> op;
+        int k = r.nextInt(8);
+        if (i == 32 || i == 33) op = L("close");
+        else if (k < 3) op = L("wb", r.nextInt(900) - 300);
+        else if (k < 6) {
+          int len = r.nextInt(40);
+          byte[] arr = new byte[len];
+          r.nextBytes(arr);
+          int off, n;
+          if (kind == 1 && r.nextInt(3) == 0) { off = r.nextInt(len + 6) - 3; n = r.nextInt(len + 6) - 2; } // may be out of bounds
+          else { off = len == 0 ? 0 : r.nextInt(len); n = r.nextInt(len - off + 1); }
+          op = L("wbs", off, n, hex(arr));
+        } else if (k == 6) op = L("flush");
+        else op = kind == 0 ? L("crc") : L("flush");
+        ops.add(op);
+        results.add(execStream(s, crc, rec, op));
+      }
+      scripts.add(L(kind, cfg, bufSize, ops, results));
+    }
+    section("javaStreams", toJson(scripts));
+  }
+
+  // ---------------------------------------------------------------- what FileSwitch / NRT hand to their delegates
+  static class Spy extends FilterDirectory {
+    final StringBuilder log = new StringBuilder();
+    Spy(Directory in) { super(in); }
+    @Override public void sync(Collection<String> names) throws IOException { log.append("sync").append(names).append(' '); in.sync(names); }
+    @Override public void close() throws IOException {
+      String[] l = in.listAll();
+      Arrays.sort(l);
+      StringBuilder sb2 = new StringBuilder("atClose=[");
+      for (String n : l) sb2.append(n).append(':').append(in.fileLength(n)).append(' ');
+      log.append(sb2.toString().trim()).append("] ");
+      in.close();
+    }
+    String drain() { String s = log.toString().trim(); log.setLength(0); return s; }
+  }
+
+  static void delegateCalls() throws IOException {
+    Set<String> exts = new HashSet<String>(Arrays.asList("fdt", "fdx", "tim"));
+    List<Object> sync = new ArrayList<Object>();
+    for (int i = 0; i < 12; i++) {
+      Spy p = new Spy(new RAMDirectory());
+      Spy s = new Spy(new RAMDirectory());
+      FileSwitchDirectory fsd = new FileSwitchDirectory(exts, p, s, false);
+      List<Object> names = genNameList();
+      fsd.sync((List<String>) (List<?>) names);
+      sync.add(L(names, "p=" + p.drain() + " s=" + s.drain()));
+    }
+    section("fileSwitchSync", toJson(sync));
+
+    List<Object> close = new ArrayList<Object>();
+    for (int i = 0; i < 12; i++) {
+      Spy spy = new Spy(new RAMDirectory());
+      NRTCachingDirectory nrt = new NRTCachingDirectory(spy, 0.001, 0.01);
+      List<Object> ops = new ArrayList<Object>();
+      int n = 1 + r.nextInt(5);
+      for (int j = 0; j < n; j++) {
+        List<Object> op = L("write", NAMES[r.nextInt(NAMES.length)], genCtx(), GoldenStoreDir.genSteps());
+        ops.add(op);
+        common(nrt, op, new HashMap<String, Lock>());
+      }
+      String cached = sorted(nrt.listCachedFiles());
+      spy.drain();
+      nrt.close();
+      close.add(L(ops, cached, spy.drain()));
+    }
+    section("nrtCloseSnapshot", toJson(close));
+  }
+
   public static void main(String[] args) throws Exception {
     osio();
     rateLimited();
     simpleRateLimiter();
     fileSwitch();
     nrt();
+    javaStreams();
+    delegateCalls();
     System.out.println(sb.append("}").toString());
   }
 }
