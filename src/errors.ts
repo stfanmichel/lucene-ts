@@ -119,11 +119,45 @@ export class FileNotFoundException extends IOException {
   }
 }
 
+/**
+ * java.nio.file.FileSystemException. The message is built like FileSystemException.getMessage():
+ * "file -> other: reason" (each part only when present).
+ */
+export class FileSystemException extends IOException {
+  readonly file: string | null;
+  readonly otherFile: string | null;
+  readonly reason: string | null;
+  constructor(file: string | null, other: string | null = null, reason: string | null = null) {
+    let message: string | undefined;
+    if (file === null && other === null) {
+      message = reason ?? undefined;
+    } else {
+      message = "";
+      if (file !== null) message += file;
+      if (other !== null) message += " -> " + other;
+      if (reason !== null) message += ": " + reason;
+    }
+    super(message);
+    this.name = "FileSystemException";
+    this.file = file;
+    this.otherFile = other;
+    this.reason = reason;
+  }
+}
+
 /** java.nio.file.NoSuchFileException (message: the file name, as in Java) */
-export class NoSuchFileException extends IOException {
-  constructor(file?: string) {
-    super(file);
+export class NoSuchFileException extends FileSystemException {
+  constructor(file: string | null = null, other: string | null = null, reason: string | null = null) {
+    super(file, other, reason);
     this.name = "NoSuchFileException";
+  }
+}
+
+/** java.nio.file.AtomicMoveNotSupportedException */
+export class AtomicMoveNotSupportedException extends FileSystemException {
+  constructor(source: string, target: string, reason: string) {
+    super(source, target, reason);
+    this.name = "AtomicMoveNotSupportedException";
   }
 }
 

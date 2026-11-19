@@ -23,4 +23,6 @@ export interface OutputStream extends Closeable {
   write(b: number): void;
   /** Writes `len` bytes of `b` starting at `off`. */
   write(b: Uint8Array, off: number, len: number): void;
+  /** Flushes buffered bytes to the underlying sink (a no-op for streams that do not buffer). */
+  flush(): void;
 }

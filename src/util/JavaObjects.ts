@@ -17,7 +17,8 @@
 
 // Small helpers for java.lang.Object / java.lang.Thread / java.util.Arrays behaviour the port needs.
 
-import { ArrayIndexOutOfBoundsException } from "../errors.js";
+import { addSuppressed, ArrayIndexOutOfBoundsException } from "../errors.js";
+import type { Closeable } from "../io/Closeable.js";
 
 const identityHashes = new WeakMap<object, number>();
 let identityHashState = 0x2545f491;
@@ -98,4 +99,32 @@ export function arraycopy(src: Uint8Array, srcPos: number, dest: Uint8Array, des
       "arraycopy: last destination index " + (destPos + length) + " out of bounds for byte[" + dest.length + "]");
   }
   dest.set(src.subarray(srcPos, srcPos + length), destPos);
+}
+
+/**
+ * try (Closeable r = ...) { body }: closes the resource after the body; a failure of close() is added as a
+ * suppressed exception when the body already failed, and is thrown by itself otherwise.
+ */
+export function tryWithResource<T>(resource: Closeable, body: () => T): T {
+  let result: T | undefined;
+  let primary: unknown = null;
+  let failed = false;
+  try {
+    result = body();
+  } catch (e) {
+    primary = e;
+    failed = true;
+  }
+  try {
+    resource.close();
+  } catch (t) {
+    if (failed) {
+      addSuppressed(primary, t);
+    } else {
+      primary = t;
+      failed = true;
+    }
+  }
+  if (failed) throw primary;
+  return result as T;
 }

@@ -59,6 +59,10 @@ export class ByteArrayOutputStream implements OutputStream {
     this.count = 0;
   }
 
+  flush(): void {
+    // nothing to flush
+  }
+
   close(): void {
     // closing a ByteArrayOutputStream has no effect
   }

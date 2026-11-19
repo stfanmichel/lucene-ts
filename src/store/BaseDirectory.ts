@@ -27,7 +27,8 @@ import type { LockFactory } from "./LockFactory.js";
  * @lucene.experimental
  */
 export abstract class BaseDirectory extends Directory {
-  protected isOpen = true;
+  /** @internal (protected volatile in Java, but read by NRTCachingDirectory in the same package) */
+  isOpen = true;
 
   /** Holds the LockFactory instance (implements locking for this Directory instance). */
   protected readonly lockFactory: LockFactory;

@@ -155,3 +155,37 @@ export const Character = {
 } as const;
 
 const ND = /^\p{Nd}$/u;
+
+/**
+ * Double.toString(double): "1.0", "0.001", "1.0E7", "-0.0", "NaN", "Infinity"... The digits are the shortest
+ * decimal that round-trips, as in JDK 19+ (earlier JDKs sometimes printed one digit more).
+ */
+export function doubleToString(d: number): string {
+  if (Number.isNaN(d)) return "NaN";
+  if (d === Infinity) return "Infinity";
+  if (d === -Infinity) return "-Infinity";
+  if (d === 0) return Object.is(d, -0) ? "-0.0" : "0.0";
+  const sign = d < 0 ? "-" : "";
+  const abs = Math.abs(d);
+  const [mant, exp] = abs.toExponential().split("e") as [string, string];
+  const digits = mant.replace(".", "");
+  const e = Number(exp);
+  if (abs >= 1e-3 && abs < 1e7) {
+    if (e >= 0) {
+      const intPart = digits.padEnd(e + 1, "0").slice(0, e + 1);
+      const frac = digits.slice(e + 1);
+      return sign + intPart + "." + (frac === "" ? "0" : frac);
+    }
+    return sign + "0." + "0".repeat(-e - 1) + digits;
+  }
+  const frac = digits.slice(1);
+  return sign + digits[0] + "." + (frac === "" ? "0" : frac) + "E" + e;
+}
+
+/** The narrowing conversion (long) d: NaN is 0, out-of-range values saturate, the rest truncates toward zero. */
+export function doubleToLong(d: number): bigint {
+  if (Number.isNaN(d)) return 0n;
+  if (d >= 9223372036854775808) return 9223372036854775807n;
+  if (d <= -9223372036854775808) return -9223372036854775808n;
+  return BigInt(Math.trunc(d));
+}
