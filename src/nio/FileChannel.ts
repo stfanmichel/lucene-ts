@@ -29,6 +29,8 @@ import {
   ClosedChannelException,
   IllegalArgumentException,
   IOException,
+  NonReadableChannelException,
+  NonWritableChannelException,
   OverlappingFileLockException,
 } from "../errors.js";
 import { ByteBuffer } from "./ByteBuffer.js";
@@ -70,9 +72,13 @@ export class FileChannel {
   private fd: number | null;
   private pos = 0;
   private lock: FileLock | null = null;
+  private readonly readable: boolean;
+  private readonly writable: boolean;
 
-  private constructor(fd: number) {
+  private constructor(fd: number, readable: boolean, writable: boolean) {
     this.fd = fd;
+    this.readable = readable;
+    this.writable = writable;
   }
 
   /** FileChannel.open(path, options...) / Files.newByteChannel(path, options...) */
@@ -84,7 +90,7 @@ export class FileChannel {
     if (write) flags = (read ? fs.constants.O_RDWR : fs.constants.O_WRONLY) | (create ? fs.constants.O_CREAT : 0);
     else flags = fs.constants.O_RDONLY;
     try {
-      return new FileChannel(fs.openSync(path, flags, 0o666));
+      return new FileChannel(fs.openSync(path, flags, 0o666), read || !write, write);
     } catch (e) {
       throw translateToIOException(e, path);
     }
@@ -130,6 +136,7 @@ export class FileChannel {
     // FileChannelImpl.read(dst, position) checks the position before the channel is open
     if (position !== undefined && position < 0) throw new IllegalArgumentException("Negative position");
     const fd = this.ensureOpenFd();
+    if (!this.readable) throw new NonReadableChannelException();
     const n = dst.remaining();
     if (n === 0) return 0;
     const at = position ?? this.pos;
@@ -158,6 +165,7 @@ export class FileChannel {
   /** tryLock(): an exclusive lock on the whole file, or null if it cannot be had (see the file header) */
   tryLock(): FileLock | null {
     const fd = this.ensureOpenFd();
+    if (!this.writable) throw new NonWritableChannelException(); // an exclusive lock needs a writable channel
     const st = fs.fstatSync(fd);
     const key = st.dev + ":" + st.ino;
     if (FileChannel._heldLocks.has(key)) throw new OverlappingFileLockException();
@@ -171,6 +179,16 @@ export class FileChannel {
     const fd = this.ensureOpenFd();
     if (position < 0) throw new IllegalArgumentException("Negative position");
     if (size < 0) throw new IllegalArgumentException("Negative size");
+    if (!this.readable) throw new NonReadableChannelException();
+    // like FileChannelImpl.map: a region past the end extends the file when the channel is writable
+    if (fs.fstatSync(fd).size < position + size) {
+      if (!this.writable) throw new IOException("Channel not open for writing - cannot extend file to required size");
+      try {
+        fs.ftruncateSync(fd, position + size);
+      } catch (e) {
+        throw new IOException(errorString(e));
+      }
+    }
     const data = new Uint8Array(size);
     let done = 0;
     try {

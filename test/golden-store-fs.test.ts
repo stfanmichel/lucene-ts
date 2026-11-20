@@ -12,14 +12,18 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IOException } from "../src/errors.js";
 import { ByteArrayInputStream } from "../src/io/ByteArrayInputStream.js";
 import { ByteArrayOutputStream } from "../src/io/ByteArrayOutputStream.js";
+import { CRC32 } from "../src/zip/CRC32.js";
 import { ByteBuffer } from "../src/nio/ByteBuffer.js";
-import { Files } from "../src/nio/Files.js";
+import { FileChannel, type FileLock, type OpenOption } from "../src/nio/FileChannel.js";
+import { Files, translateToIOException } from "../src/nio/Files.js";
+import type { OutputStream } from "../src/io/OutputStream.js";
+import { NoLockFactory } from "../src/store/NoLockFactory.js";
 import { ByteBufferIndexInput, type BufferCleaner } from "../src/store/ByteBufferIndexInput.js";
 import type { FSDirectory } from "../src/store/FSDirectory.js";
 import { FSDirectory as FSD } from "../src/store/FSDirectory.js";
@@ -31,10 +35,10 @@ import type { LockFactory } from "../src/store/LockFactory.js";
 import { MergeInfo } from "../src/store/MergeInfo.js";
 import { MMapDirectory } from "../src/store/MMapDirectory.js";
 import { NativeFSLockFactory } from "../src/store/NativeFSLockFactory.js";
-import { NIOFSDirectory } from "../src/store/NIOFSDirectory.js";
+import { NIOFSDirectory, NIOFSIndexInput } from "../src/store/NIOFSDirectory.js";
 import { RAMDirectory } from "../src/store/RAMDirectory.js";
 import { RANDOM_ACCESS_INPUT } from "../src/store/RandomAccessInput.js";
-import { SimpleFSDirectory } from "../src/store/SimpleFSDirectory.js";
+import { SimpleFSDirectory, SimpleFSIndexInput } from "../src/store/SimpleFSDirectory.js";
 import { SimpleFSLockFactory } from "../src/store/SimpleFSLockFactory.js";
 import { SingleInstanceLockFactory } from "../src/store/SingleInstanceLockFactory.js";
 import { VerifyingLockFactory } from "../src/store/VerifyingLockFactory.js";
@@ -60,6 +64,8 @@ const norm = (s: string): string => s.split(BASE).join("<D>").replace(/(?:[\w$]+
 
 function exs(e: unknown): string {
   assert.ok(e instanceof Error, "thrown value is not an Error: " + String(e));
+  // a JS null dereference is Java's NullPointerException (message: JDK-specific, not compared)
+  if (e instanceof TypeError && /of (null|undefined)/.test(e.message)) return "EX:NullPointerException";
   return norm("EX:" + e.name + ":" + e.message);
 }
 
@@ -72,13 +78,21 @@ function res(f: () => string): string {
 }
 
 /** AIOOBE / NPE messages are JDK-specific: only the class is compared. */
-const jdkMsg = (s: string): string => s.replace(/EX:(ArrayIndexOutOfBoundsException|NullPointerException):[^|]*/g, "EX:$1");
+const jdkMsg = (s: string): string => s.replace(/EX:(ArrayIndexOutOfBoundsException|NullPointerException)(?::[^|]*)?/g, "EX:$1");
 function same(actual: string, expected: string, ctx: string): void {
   if (/EX:(ArrayIndexOutOfBoundsException|NullPointerException)/.test(expected)) {
     assert.equal(jdkMsg(actual), jdkMsg(expected), ctx);
   } else {
     assert.equal(actual, expected, ctx);
   }
+}
+
+/** hex for small arrays, length + CRC32 for big ones (like the Java harness) */
+function dig(b: Uint8Array): string {
+  if (b.length <= 64) return toHex(b);
+  const c = new CRC32();
+  c.update(b, 0, b.length);
+  return "d" + b.length + ":" + c.getValue();
 }
 
 const sorted = (l: string[]): string => "[" + [...l].sort(compareJavaStrings).join(", ") + "]";
@@ -126,6 +140,18 @@ test("ByteBuffer emulation matches java.nio.ByteBuffer", () => {
           case "slice": stack.push(b.slice()); r = "ok"; break;
           case "pop": if (stack.length > 1) { stack.pop(); r = "ok"; } else r = "none"; break;
           case "cap": r = "" + b.capacity(); break;
+          case "wrapE": {
+            assert.equal(op[1], n0);
+            const w = ByteBuffer.wrap(arr, op[2], op[3]);
+            r = w.position() + "/" + w.limit() + "/" + w.capacity();
+            break;
+          }
+          case "alloc": {
+            const a = ByteBuffer.allocate(op[1]);
+            stack.push(a);
+            r = a.position() + "/" + a.limit() + "/" + a.capacity();
+            break;
+          }
           case "wrap": {
             assert.equal(op[1], n0);
             const w = ByteBuffer.wrap(arr, op[2], op[3]);
@@ -171,7 +197,7 @@ class Session {
           } catch (e) {
             r = exs(e);
           }
-          return r + "|" + toHex(arr);
+          return r + "|" + dig(arr);
         }
         case "rs": return "" + inp.readShort();
         case "ri": return "" + inp.readInt();
@@ -196,6 +222,18 @@ class Session {
         case "clone": this.stack.push(inp.clone()); return "ok";
         case "pop": if (this.stack.length > 1) { this.stack.pop(); return "ok"; } return "none";
         case "str": return inp.toString();
+        case "ri2": {
+          const [len, offs] = [op[1] as number, op[2] as number];
+          const arr = new Uint8Array(offs + len + 2).fill(0x77);
+          let r: string;
+          try {
+            (inp as any).readInternal(arr, offs, len);
+            r = "ok";
+          } catch (e) {
+            r = exs(e);
+          }
+          return r + "|" + dig(arr);
+        }
         case "close": inp.close(); return "ok";
         case "closeRoot": this.root.close(); return "ok";
         case "clog": { const l = (log?.text ?? "").trim(); if (log) log.text = ""; return l; }
@@ -412,6 +450,14 @@ test("SimpleFSLockFactory and NativeFSLockFactory behave like the Java classes",
         case "rmfile": r = res(() => "" + Files.deleteIfExists(join(p, op[1]))); break;
         case "list": r = res(() => sorted(FSD.listAllIn(p))); break;
         case "ramLock": r = res(() => lf.makeLock(new RAMDirectory(), "x").toString()); break;
+        case "mkdirLock":
+          r = res(() => {
+            const q = join(p, op[1]);
+            Files.createDirectories(q);
+            writeFileSync(join(q, "x"), new Uint8Array([1]));
+            return "ok";
+          });
+          break;
         default: throw new Error("bad lock op " + op[0]);
       }
       same(r, expected, ctx);
@@ -455,7 +501,7 @@ test("IOUtils.fsync, rm and deleteFiles* behave like the Java methods", () => {
   assert.ok(scripts.length > 0);
   const paths = (p: string, names: Array<string | null>): Array<string | null> => names.map((n) => (n === null ? null : join(p, n)));
   const tree = (root: string, q: string, out: string[]): void => {
-    for (const n of FSD.listAllIn(q)) {
+    for (const n of [...FSD.listAllIn(q)].sort(compareJavaStrings)) {
       const c = join(q, n);
       const dir = Files.isDirectory(c);
       out.push(c.substring(root.length + 1) + (dir ? "/" : ":" + Files.size(c)));
@@ -483,6 +529,18 @@ test("IOUtils.fsync, rm and deleteFiles* behave like the Java methods", () => {
           });
           break;
         case "dir": r = res(() => { Files.createDirectories(join(p, op[1])); return "ok"; }); break;
+        case "symlink":
+          r = res(() => {
+            const link = join(p, op[1]);
+            try {
+              symlinkSync(op[2], link);
+            } catch (e) {
+              throw translateToIOException(e, link);
+            }
+            return "ok";
+          });
+          break;
+        case "isDir": r = res(() => "" + Files.isDirectory(join(p, op[1]))); break;
         case "fsync": r = res(() => { IOUtils.fsync(join(p, op[1]), op[2]); return "ok"; }); break;
         case "rm": r = res(() => { IOUtils.rm(...paths(p, op[1])); return "ok"; }); break;
         case "deleteFilesIfExist": r = res(() => { IOUtils.deleteFilesIfExist(...paths(p, op[1])); return "ok"; }); break;
@@ -493,6 +551,230 @@ test("IOUtils.fsync, rm and deleteFiles* behave like the Java methods", () => {
       }
       same(r, expected, ctx);
     });
+    IOUtils.rm(p);
+  });
+});
+
+// ---------------------------------------------------------------- RAMDirectory(FSDirectory, IOContext)
+test("RAMDirectory(FSDirectory, IOContext) copies the files (not the sub-directories) like the Java constructor", () => {
+  const scripts: Op[][] = golden.ramFrom;
+  assert.ok(scripts.length > 0);
+  scripts.forEach(([setup, expected], s) => {
+    const [files, dirs, close, c] = setup as [Array<[string, string]>, string[], boolean, number];
+    const p = join(BASE, "r" + s);
+    const d = new NIOFSDirectory(p);
+    for (const [name, hex] of files) writeFileSync(join(p, name), hexToBytes(hex));
+    for (const name of dirs) {
+      Files.createDirectories(join(p, name));
+      writeFileSync(join(p, name, "inner"), new Uint8Array([1, 2, 3]));
+    }
+    if (close) d.close();
+    const r = res(() => {
+      const ram = new RAMDirectory(d, ioctx(c));
+      const names = ram.listAll().sort(compareJavaStrings);
+      let b = "[" + names.join(", ") + "]";
+      for (const n of names) {
+        const inp = ram.openInput(n, IOContext.DEFAULT);
+        const data = new Uint8Array(inp.length());
+        inp.readBytes(data, 0, data.length);
+        inp.close();
+        b += " " + n + ":" + ram.fileLength(n) + ":" + toHex(data);
+      }
+      return b;
+    });
+    same(r, expected as unknown as string, `ramFrom script ${s}`);
+    if (!close) d.close();
+    IOUtils.rm(p);
+  });
+});
+
+// ---------------------------------------------------------------- constructors
+test("FSDirectory subclass constructors (lock factory, chunk size, odd paths) behave like the Java ones", () => {
+  const scripts: unknown[] = golden.ctors;
+  assert.ok(scripts.length > 100);
+  writeFileSync(join(BASE, "cfile"), new Uint8Array([1]));
+  for (const [[cls, variant, lfi, chunk, pk, cid], expected] of scripts as Array<[number[], string]>) {
+    const lfs: Array<LockFactory | null> = [SimpleFSLockFactory.INSTANCE, NativeFSLockFactory.INSTANCE, NoLockFactory.INSTANCE, new SingleInstanceLockFactory(), null];
+    const q = pk === 0 ? join(BASE, "c" + cid) : pk === 1 ? join(BASE, "cfile") : join(BASE, "cn" + cid, "x", "y");
+    const r = res(() => {
+      const lf = (lfi >= 0 ? lfs[lfi] : null) as LockFactory;
+      let d: FSDirectory;
+      if (cls === 0) d = variant === 0 ? new SimpleFSDirectory(q) : new SimpleFSDirectory(q, lf);
+      else if (cls === 1) d = variant === 0 ? new NIOFSDirectory(q) : new NIOFSDirectory(q, lf);
+      else if (variant === 0) d = new MMapDirectory(q);
+      else if (variant === 1) d = new MMapDirectory(q, lf);
+      else if (variant === 2) d = new MMapDirectory(q, chunk);
+      else d = new MMapDirectory(q, lf, chunk);
+      let s = d.toString();
+      if (d instanceof MMapDirectory) s += " max=" + d.getMaxChunkSize();
+      d.close();
+      return s;
+    });
+    same(r, expected, `ctor ${JSON.stringify([cls, variant, lfi, chunk, pk])}`);
+    if (pk !== 1) IOUtils.rm(pk === 0 ? q : join(BASE, "cn" + cid));
+  }
+});
+
+test("FSDirectory.open picks the implementation (no mmap here: NIOFSDirectory, or SimpleFSDirectory on Windows)", () => {
+  const p = join(BASE, "open1");
+  const d = FSD.open(p);
+  assert.ok(d instanceof NIOFSDirectory);
+  assert.equal(d.getDirectory(), p);
+  d.close();
+  const lf = new SingleInstanceLockFactory();
+  const d2 = FSD.open(p, lf);
+  assert.ok(d2 instanceof NIOFSDirectory);
+  assert.ok(d2.toString().includes("lockFactory=" + lf.toString()));
+  d2.close();
+  assert.equal(MMapDirectory.UNMAP_SUPPORTED, false);
+  assert.equal(MMapDirectory.DEFAULT_MAX_CHUNK_SIZE, 1 << 30);
+  assert.throws(() => new MMapDirectory(p).setUseUnmap(true), /Unmap hack not supported/);
+  IOUtils.rm(p);
+});
+
+// ---------------------------------------------------------------- who owns the file: clones, slices, close
+test("closing clones and slices of FS inputs leaves the parent usable, like the Java classes", () => {
+  const scripts: Op[][] = golden.cloneClose;
+  assert.ok(scripts.length > 100);
+  scripts.forEach((ops, si) => {
+    const [, kind, chunk, size, id] = ops[0][0] as [string, number, number, number, number];
+    const p = join(BASE, "s" + id);
+    const d = makeDir(kind, p, chunk);
+    const data = new Uint8Array(size);
+    for (let i = 0; i < size; i++) data[i] = (i * 13 + si) & 0xff;
+    writeFileSync(join(p, "a"), data);
+    const inp = d.openInput("a", IOContext.DEFAULT);
+    replayReads(inp, ops.slice(1), `cloneClose script ${si} (kind ${kind})`);
+    try { inp.close(); } catch { /* ignore */ }
+    d.close();
+    IOUtils.rm(p);
+  });
+});
+
+// ---------------------------------------------------------------- SimpleFSIndexInput / NIOFSIndexInput on a channel
+test("SimpleFSIndexInput and NIOFSIndexInput over a channel (slices past the end, big reads, readInternal) behave like the Java ones", () => {
+  const scripts: Op[][] = golden.directIn;
+  assert.ok(scripts.length === 80);
+  scripts.forEach((ops, s) => {
+    const [, kind, n, seed, off, length, bufSize] = ops[0][0] as [string, number, number, number, number, number, number];
+    const f = join(BASE, "di" + s);
+    const data = new Uint8Array(n);
+    for (let i = 0; i < n; i++) data[i] = (i * 31 + 7 + seed) & 0xff;
+    writeFileSync(f, data);
+    const ch = FileChannel.open(f, "READ");
+    const inp = kind === 0 ? new SimpleFSIndexInput("direct", ch, off, length, bufSize) : new NIOFSIndexInput("direct", ch, off, length, bufSize);
+    assert.equal(inp.toString() + " " + inp.length(), ops[0][1], `directIn ${s} new`);
+    replayReads(inp, ops.slice(1), `directIn script ${s} (kind ${kind})`);
+    ch.close();
+    IOUtils.rm(f);
+  });
+});
+
+// ---------------------------------------------------------------- FileChannel / FileLock / Files.newOutputStream
+test("FileChannel, FileLock and Files.newOutputStream behave like the JDK ones", () => {
+  const scripts: Op[][] = golden.channels;
+  assert.ok(scripts.length === 80);
+  scripts.forEach((ops, s) => {
+    const p = join(BASE, "k" + s);
+    Files.createDirectories(p);
+    Files.createDirectories(join(p, "chdir"));
+    // ch1 / ch2 exist with data[j] = (j * 17 + s) & 0xff and the size recorded by the Java harness (-1: absent)
+    const chs: Array<FileChannel | null> = [null, null, null];
+    const locks: Array<FileLock | null> = [null, null, null];
+    ["ch1", "ch2"].forEach((nm, i) => {
+      const n: number = golden.channelsMeta[s][i];
+      if (n < 0) return;
+      const data = new Uint8Array(n);
+      for (let j = 0; j < n; j++) data[j] = (j * 17 + s) & 0xff;
+      writeFileSync(join(p, nm), data);
+    });
+    ops.forEach(([op, expected], i) => {
+      const ctx = `channels script ${s} op ${i} ${JSON.stringify(op)}`;
+      const ci: number = op[1];
+      let r: string;
+      switch (op[0]) {
+        case "open":
+          r = res(() => {
+            const o: OpenOption[] = [];
+            if ((op[2] & 1) !== 0) o.push("READ");
+            if ((op[2] & 2) !== 0) o.push("WRITE");
+            if ((op[2] & 4) !== 0) o.push("CREATE");
+            chs[ci] = FileChannel.open(join(p, op[3]), ...o);
+            return "ok";
+          });
+          break;
+        case "size": r = res(() => "" + chs[ci]!.size()); break;
+        case "pos": r = res(() => "" + chs[ci]!.position()); break;
+        case "setpos": r = res(() => { chs[ci]!.position(op[2]); return "ok"; }); break;
+        case "read":
+          r = res(() => {
+            const bb = ByteBuffer.allocate(op[2]);
+            bb.position(Math.min(op[3], op[2]));
+            const n = chs[ci]!.read(bb);
+            return n + "@" + bb.position() + "|" + dig(bb._array()) + "|pos=" + chs[ci]!.position();
+          });
+          break;
+        case "readAt":
+          r = res(() => {
+            const bb = ByteBuffer.allocate(op[2]);
+            const n = chs[ci]!.read(bb, op[3]);
+            return n + "@" + bb.position() + "|" + dig(bb._array()) + "|pos=" + chs[ci]!.position();
+          });
+          break;
+        case "force": r = res(() => { chs[ci]!.force(true); return "ok"; }); break;
+        case "tryLock": r = res(() => { const l = chs[ci]!.tryLock(); locks[ci] = l; return l === null ? "null" : "lock valid=" + l.isValid(); }); break;
+        case "release": r = res(() => { locks[ci]!.release(); return "ok valid=" + locks[ci]!.isValid(); }); break;
+        case "valid": r = res(() => "" + locks[ci]!.isValid()); break;
+        case "close": r = res(() => { chs[ci]!.close(); return "ok open=" + chs[ci]!.isOpen() + (locks[ci] !== null ? " valid=" + locks[ci]!.isValid() : ""); }); break;
+        case "isOpen": r = res(() => "" + chs[ci]!.isOpen()); break;
+        case "map":
+          r = res(() => {
+            const m = chs[ci]!.map(op[2], op[3]);
+            const b = new Uint8Array(m.remaining());
+            m.get(b, 0, b.length);
+            return m.capacity() + "|" + dig(b);
+          });
+          break;
+        default: throw new Error("bad channel op " + op[0]);
+      }
+      same(r, expected, ctx);
+    });
+    for (const c of chs) {
+      try { c?.close(); } catch { /* ignore */ }
+    }
+    IOUtils.rm(p);
+  });
+});
+
+test("Files.newOutputStream behaves like the JDK stream", () => {
+  const scripts: Op[][] = golden.ostream;
+  assert.ok(scripts.length === 60);
+  scripts.forEach((ops, s) => {
+    const p = join(BASE, "o" + s);
+    Files.createDirectories(join(p, "chdir"));
+    let os = null as OutputStream | null;
+    ops.forEach(([op, expected], i) => {
+      const ctx = `ostream script ${s} op ${i} ${JSON.stringify(op)}`;
+      let r: string;
+      switch (op[0]) {
+        case "open": r = res(() => { os = Files.newOutputStream(join(p, op[1])); return "ok"; }); break;
+        case "w": r = res(() => { os!.write(op[1]); return "ok"; }); break;
+        case "wa":
+          r = res(() => {
+            const a = new Uint8Array(op[1]);
+            for (let j = 0; j < op[1]; j++) a[j] = j + 1;
+            os!.write(a, op[2], op[3]);
+            return "ok";
+          });
+          break;
+        case "flush": r = res(() => { os!.flush(); return "ok"; }); break;
+        case "close": r = res(() => { os!.close(); return "ok"; }); break;
+        case "size": r = res(() => "" + Files.size(join(p, op[1]))); break;
+        default: throw new Error("bad ostream op " + op[0]);
+      }
+      same(r, expected, ctx);
+    });
+    try { os?.close(); } catch { /* ignore */ }
     IOUtils.rm(p);
   });
 });

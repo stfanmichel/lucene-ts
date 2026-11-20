@@ -217,6 +217,22 @@ export class OverlappingFileLockException extends IllegalStateException {
   }
 }
 
+/** java.nio.channels.NonWritableChannelException (an IllegalStateException in Java) */
+export class NonWritableChannelException extends IllegalStateException {
+  constructor() {
+    super();
+    this.name = "NonWritableChannelException";
+  }
+}
+
+/** java.nio.channels.NonReadableChannelException (an IllegalStateException in Java) */
+export class NonReadableChannelException extends IllegalStateException {
+  constructor() {
+    super();
+    this.name = "NonReadableChannelException";
+  }
+}
+
 /** java.nio.BufferUnderflowException (a RuntimeException in Java) */
 export class BufferUnderflowException extends RuntimeException {
   constructor() {

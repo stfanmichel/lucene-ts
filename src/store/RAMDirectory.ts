@@ -18,16 +18,19 @@
 // Port of org.apache.lucene.store.RAMDirectory (Lucene 5.2.1).
 //
 // Deviations:
-//  - The constructor RAMDirectory(FSDirectory dir, IOContext context) is not ported (FSDirectory is not).
+//  - The (private) constructor RAMDirectory(FSDirectory, boolean closeDir, IOContext) is folded into the public
+//    one: closeDir is always false there.
 //  - fileMap is a plain Map: listAll() returns names in insertion order, whereas the Java
 //    ConcurrentHashMap order is unspecified (it differs between JDK versions).
 //  - Single-threaded: no synchronization, sizeInBytes is an AtomicLong holding a number.
 
 import { FileNotFoundException } from "../errors.js";
+import { Files, resolvePath } from "../nio/Files.js";
 import type { Accountable } from "../util/Accountable.js";
 import { Accountables } from "../util/Accountables.js";
 import { AtomicLong } from "../util/AtomicLong.js";
 import { BaseDirectory } from "./BaseDirectory.js";
+import type { FSDirectory } from "./FSDirectory.js";
 import type { IndexInput } from "./IndexInput.js";
 import type { IndexOutput } from "./IndexOutput.js";
 import type { IOContext } from "./IOContext.js";
@@ -61,9 +64,25 @@ export class RAMDirectory extends BaseDirectory implements Accountable {
   constructor();
   /** Constructs an empty {@link Directory} with the given {@link LockFactory}. */
   constructor(lockFactory: LockFactory);
-  constructor(lockFactory?: LockFactory) {
+  /**
+   * Creates a new <code>RAMDirectory</code> instance from a different <code>Directory</code> implementation.
+   * This can be used to load a disk-based index into memory (sub-directories are skipped).
+   * @param dir a <code>Directory</code> value
+   * @param context io context
+   * @exception IOException if an error occurs
+   */
+  constructor(dir: FSDirectory, context: IOContext);
+  constructor(a?: LockFactory | FSDirectory, context?: IOContext) {
     // an explicit null/undefined argument reaches BaseDirectory's null check (NullPointerException), as in Java
-    super(arguments.length === 0 ? new SingleInstanceLockFactory() : lockFactory!);
+    super(arguments.length === 1 ? (a as LockFactory) : new SingleInstanceLockFactory());
+    if (arguments.length === 2) {
+      const dir = a as FSDirectory;
+      for (const file of dir.listAll()) {
+        if (!Files.isDirectory(resolvePath(dir.getDirectory(), file))) {
+          this.copyFrom(dir, file, file, context!);
+        }
+      }
+    }
   }
 
   listAll(): string[] {

@@ -10,8 +10,8 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
    `../lucene-src/` (on doit retrouver `../lucene-src/lucene-5.2.1/core/src/java/…`). `archive.apache.org` est
    bloqué depuis l'environnement cloud.
 2. Récupérer le dépôt (`git clone` du remote ou `git clone lucene-ts.bundle lucene-ts`), puis `npm run typecheck && npm test`.
-3. Prochaines étapes prévues : fin de `store` (partie fichiers : `FSDirectory`, `SimpleFS`/`NIOFS`/`MMap`, verrous
-   fichiers, `VerifyingLockFactory`… — à décider : `node:fs` synchrone), `util.OfflineSorter`, puis `analysis`.
+3. Prochaines étapes prévues : fin de `store` (il ne reste que `LockStressTest`/`LockVerifyServer`, outils de test à
+   sockets, non portés), `util.OfflineSorter`, puis `analysis`.
 4. Commiter après chaque classe ou groupe de classes portées et testées ; une couche = plusieurs commits.
 
 ## Commandes
@@ -19,7 +19,7 @@ Le portage part du module `core` (~155 000 lignes Java) et avance par couches, d
 ```
 npm run typecheck   # tsc --noEmit
 npm test            # node --test via tsx (test/*.test.ts)
-tools/golden/generate.sh [chemin/vers/lucene-5.2.1]   # régénère test/golden/*.json : util, util-refs, util-sorters, store-data, store-io, store-dir (JDK requis)
+tools/golden/generate.sh [chemin/vers/lucene-5.2.1]   # régénère test/golden/*.json : util, util-refs, util-sorters, store-data, store-io, store-dir, store-more, store-fs (JDK requis)
 ```
 
 Note : ici `node_modules/@types/node` et `node_modules/tsx` sont des liens vers des installations
@@ -36,9 +36,10 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 | `store.IndexInput`, `IndexOutput`, `RandomAccessInput`, `IOContext` (+ `FlushInfo`, `MergeInfo`), `BufferedIndexInput`, `ChecksumIndexInput`, `BufferedChecksumIndexInput`, `BufferedChecksum` (+ `zip.CRC32`) | porté, testé contre le Java (résultats **et** suite exacte des appels `readInternal`/`seekInternal`) |
 | `store.Directory`, `BaseDirectory`, `FilterDirectory`, `TrackingDirectoryWrapper`, `RAMDirectory`, `RAMFile`, `RAMInputStream`, `RAMOutputStream`, `Lock` (+ `Lock.With`), `LockFactory`, `NoLockFactory`, `SingleInstanceLockFactory`, `LockObtainFailedException`, `LockReleaseFailedException` (+ `util.IOUtils` partiel, `Accountable`, `Accountables`, `AtomicLong`, `ThreadInterruptedException`, `RamUsageEstimator.humanReadableUnits`) | porté, testé contre le Java (scripts aléatoires sur `RAMDirectory`, 64 combinaisons de pannes de `copyFrom` avec exceptions supprimées, verrous, `IOUtils`…) ; tests de mutation : aucun survivant non équivalent |
 | `store.OutputStreamIndexOutput`, `RateLimiter` (+ `SimpleRateLimiter`), `RateLimitedIndexOutput`, `FileSwitchDirectory`, `NRTCachingDirectory` (+ `io.BufferedOutputStream`/`FilterOutputStream`, `zip.CheckedOutputStream`, `errors.FileSystemException` & co, `JavaNumbers.doubleToString`) | porté, testé contre le Java (suite exacte des écritures vers le flux sous-jacent, pannes de write/flush/close avec exceptions supprimées imbriquées, décisions de cache NRT, `sync`/`close` transmis aux délégués, `Double.toString` du JDK) ; mutations : aucun survivant non équivalent |
+| `store.FSDirectory`, `SimpleFSDirectory`, `NIOFSDirectory`, `MMapDirectory`, `ByteBufferIndexInput`, `FSLockFactory`, `SimpleFSLockFactory`, `NativeFSLockFactory`, `VerifyingLockFactory` (+ `nio/ByteBuffer`, `nio/FileChannel`, `nio/Files`, `util.Constants`, `util.WeakIdentityMap`, `IOUtils.fsync`/`rm`/`deleteFilesIfExist`, `errors.getMessage`) | porté, testé contre le Java (scripts aléatoires dans un répertoire temporaire : création/lecture/renommage/suppression/sync, entrées lues après `close`, répertoires à la place de fichiers, mmap par morceaux de 1 à 2^30 octets, slices et clones, verrous, protocole de `VerifyingLockFactory`, `ByteBuffer` du JDK) ; `LockStressTest`/`LockVerifyServer` (sockets) non portés |
 | `util.RamUsageEstimator` | constantes de taille + `humanReadableUnits` (`sizeOf` & co à faire) |
 | `util.OfflineSorter` | à faire (dépend de `Directory`) |
-| reste de `util` (≈165 fichiers), reste de `store` (FS, NRTCaching, RateLimiter, FileSwitch), `analysis`, `document`, `index`, `search`, `codecs` | à faire |
+| reste de `util` (≈165 fichiers), `analysis`, `document`, `index`, `search`, `codecs` | à faire |
 
 ## Conventions de portage
 
@@ -119,6 +120,22 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 - `FileSwitchDirectory`/`NRTCachingDirectory.listAll()` rendent l'ordre d'un `HashSet` Java (`javaHashOrder`) à partir de
   l'ordre d'insertion ; les tests comparent des listes triées car `RAMDirectory.listAll()` n'a pas d'ordre spécifié.
 - `BaseDirectory.isOpen` est public (+ `@internal`) car `NRTCachingDirectory` le lit.
+- Système de fichiers (`src/nio/`) : un `java.nio.file.Path` est une `string` ; `Files` (sous-ensemble : `createDirectories`,
+  `createFile`, `delete`, `deleteIfExists`, `size`, `atomicMove`, `newOutputStream`, `toRealPath`…), `ByteBuffer` (big-endian,
+  `position`/`limit`/`slice`/`duplicate`, messages d'exception du JDK 21 : `IndexOutOfBoundsException` **sans message**) et
+  `FileChannel` (descripteurs `node:fs` synchrones) émulent le JDK ; les erreurs `errno` sont traduites en
+  `NoSuchFileException`, `FileAlreadyExistsException`, `FileSystemException("chemin: Not a directory")`… comme
+  `UnixException.translateToIOException`. `getMessage(e)` (`errors.ts`) rend `null` pour une exception sans message
+  (Lucene écrit `ioe.getMessage() + ": " + this` → `"null: …"` après un `close()`).
+- `assert cond` sans message lève une `AssertionError` **sans message** (comme Java).
+- `FSDirectory.listAll(Path)` (statique) s'appelle `FSDirectory.listAllIn` ; `listAll()` renvoie les noms triés
+  (Java : ordre de `readdir`, non spécifié ; les tests comparent des listes triées).
+- `FSDirectory.open` renvoie un `NIOFSDirectory` (ou `SimpleFSDirectory` sous Windows) : `MMapDirectory.UNMAP_SUPPORTED` est
+  `false` (Node ne peut ni mapper ni démapper), donc `setUseUnmap(true)` lève et aucun clone n'est suivi.
+  `MMapDirectory` « mappe » des copies en mémoire (instantané du fichier à l'ouverture).
+- `NativeFSLockFactory` n'exclut que les instances du **même processus** (`LOCK_HELD` + table de `FileChannel.tryLock`) :
+  Node n'a pas de verrou de fichier du système ; un autre processus qui tient le même fichier n'est pas détecté.
+- `RAMDirectory(FSDirectory, IOContext)` : constructeur à rajouter (toutes les dépendances existent maintenant).
 - `Accountable.getChildResources()` renvoie un tableau en lecture seule ; `System.lineSeparator()` = `"\n"`.
 
 ## Écarts connus avec le Java

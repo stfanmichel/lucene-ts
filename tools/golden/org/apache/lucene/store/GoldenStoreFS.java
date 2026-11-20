@@ -2,10 +2,16 @@ package org.apache.lucene.store;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.io.OutputStream;
 import java.util.*;
 import org.apache.lucene.util.IOUtils;
 
@@ -37,6 +43,13 @@ public class GoldenStoreFS {
       else b.append(String.format("\\u%04x", (int) c));
     }
     return b.append('"').toString();
+  }
+  /** hex for small arrays, length + CRC32 for big ones (keeps the JSON small) */
+  static String dig(byte[] b) {
+    if (b.length <= 64) return hex(b);
+    java.util.zip.CRC32 c = new java.util.zip.CRC32();
+    c.update(b, 0, b.length);
+    return "d" + b.length + ":" + c.getValue();
   }
   static String hex(byte[] b) {
     StringBuilder h = new StringBuilder();
@@ -82,7 +95,9 @@ public class GoldenStoreFS {
     throw new AssertionError(o.getClass());
   }
 
+  static long t0 = System.currentTimeMillis();
   static void section(String name, String json) {
+    System.err.println("section " + name + " done at " + (System.currentTimeMillis() - t0) + " ms");
     if (sb.length() > 1) sb.append(",\n");
     sb.append(js(name)).append(':').append(json);
   }
@@ -126,6 +141,17 @@ public class GoldenStoreFS {
       for (int i = 0; i < n0; i++) arr[i] = (byte) (i * 37 + 5 + s);
       stack.add(ByteBuffer.wrap(arr));
       ops.add(L(L("new", n0, s), "cap=" + n0));
+      int[][] edge = {{0, 0}, {n0, 0}, {0, n0}, {1, n0}, {n0, 1}, {-1, 0}, {0, -1}, {n0 + 1, 0}};
+      for (int[] e : edge) {
+        String er;
+        try {
+          ByteBuffer w = ByteBuffer.wrap(arr, e[0], e[1]);
+          er = w.position() + "/" + w.limit() + "/" + w.capacity();
+        } catch (Throwable t) {
+          er = exs(t);
+        }
+        ops.add(L(L("wrapE", n0, e[0], e[1]), norm(er)));
+      }
       for (int k = 0; k < 40; k++) {
         ByteBuffer b = stack.get(stack.size() - 1);
         int cap = b.capacity();
@@ -133,7 +159,7 @@ public class GoldenStoreFS {
         List<Object> op = null;
         String res;
         try {
-          switch (ri(21)) {
+          switch (ri(22)) {
             case 0: op = L("clear"); b.clear(); res = "ok"; break;
             case 1: op = L("pos", pp); b.position(pp); res = "ok"; break;
             case 2: op = L("lim", pp); b.limit(pp); res = "ok"; break;
@@ -165,6 +191,13 @@ public class GoldenStoreFS {
             case 16: op = L("slice"); stack.add(b.slice()); res = "ok"; break;
             case 17: op = L("pop"); if (stack.size() > 1) { stack.remove(stack.size() - 1); res = "ok"; } else res = "none"; break;
             case 18: op = L("cap"); res = "" + cap; break;
+            case 21: {
+              op = L("alloc", pp - 1);
+              ByteBuffer a = ByteBuffer.allocate(pp - 1);
+              stack.add(a);
+              res = a.position() + "/" + a.limit() + "/" + a.capacity();
+              break;
+            }
             case 19: {
               int len = ri(cap + 3), off = ri(cap + 3);
               op = L("wrap", n0, off, len);
@@ -226,7 +259,7 @@ public class GoldenStoreFS {
       }
       else if (k < 84) {
         int off = ri(l + 1), n = ri(l - off + 1);
-        if (ri(8) == 0) { off = ri(l + 5) - 1; n = ri(l + 5) - 1; }
+        if (ri(4) == 0) { off = ri(l + 5) - 1; n = ri(l + 5) - 1; }
         op = L("slice", off, n);
       }
       else if (k < 89) op = L("clone");
@@ -234,6 +267,23 @@ public class GoldenStoreFS {
       else if (k < 96) op = L("str");
       else if (k < 98) op = L("close");
       else op = L("rbs", 0, 0, 0);
+      return L(op, run(op));
+    }
+
+    /** clone/slice/close/pop heavy ops, to exercise who owns the file */
+    List<Object> nextBiased() {
+      IndexInput in = top();
+      int l = (int) Math.min(in.length(), 100000);
+      int k = ri(100);
+      List<Object> op;
+      if (k < 18) op = L("clone");
+      else if (k < 33) { int off = ri(l + 1); op = L("slice", off, ri(l - off + 1)); }
+      else if (k < 52) op = L("close");
+      else if (k < 66) op = L("pop");
+      else if (k < 84) op = L("rb");
+      else if (k < 88) op = L("closeRoot");
+      else if (k < 94) op = L("at", "b", ri(l + 2));
+      else op = L("rbs", ri(Math.min(l + 3, 6)), ri(3), ri(3));
       return L(op, run(op));
     }
 
@@ -255,7 +305,7 @@ public class GoldenStoreFS {
             } catch (Throwable t) {
               res = exs(t);
             }
-            return res + "|" + hex(arr);
+            return res + "|" + dig(arr);
           }
           case "rs": return "" + in.readShort();
           case "ri": return "" + in.readInt();
@@ -280,6 +330,19 @@ public class GoldenStoreFS {
           case "clone": stack.add(in.clone()); return "ok";
           case "pop": if (stack.size() > 1) { stack.remove(stack.size() - 1); return "ok"; } return "none";
           case "str": return in.toString();
+          case "ri2": {
+            int len = (Integer) op.get(1), offs = (Integer) op.get(2);
+            byte[] arr = new byte[offs + len + 2];
+            Arrays.fill(arr, (byte) 0x77);
+            String res;
+            try {
+              ((BufferedIndexInput) in).readInternal(arr, offs, len);
+              res = "ok";
+            } catch (Throwable t) {
+              res = exs(t);
+            }
+            return res + "|" + dig(arr);
+          }
           case "close": in.close(); return "ok";
           case "closeRoot": root.close(); return "ok";
           case "clog": { String l = log.toString().trim(); log.setLength(0); return l; }
@@ -488,7 +551,7 @@ public class GoldenStoreFS {
     List<Object> scripts = new ArrayList<Object>();
     int id = 0;
     for (int kind = 0; kind < 3; kind++) {
-      int n = kind == 2 ? 70 : 40;
+      int n = kind == 2 ? 70 : 60;
       for (int s = 0; s < n; s++) {
         int chunk = kind == 2 ? pick(CHUNKS) : 0;
         scripts.add(dirScript(kind, chunk, id++, 30));
@@ -603,9 +666,13 @@ public class GoldenStoreFS {
             String name = pick(LOCKNAMES);
             op = L("rmfile", name);
             result = res(() -> "" + Files.deleteIfExists(p.resolve(name)));
-          } else if (k < 97) {
+          } else if (k < 95) {
             op = L("list");
             result = res(() -> { String[] l = FSDirectory.listAll(p); Arrays.sort(l); return Arrays.toString(l); });
+          } else if (k < 98) {
+            String name = pick(LOCKNAMES);
+            op = L("mkdirLock", name);
+            result = res(() -> { Path q = p.resolve(name); Files.createDirectories(q); Files.write(q.resolve("x"), new byte[] {1}); return "ok"; });
           } else {
             op = L("ramLock");
             result = res(() -> { RAMDirectory ram = new RAMDirectory(); return "" + lf.makeLock(ram, "x").toString(); });
@@ -657,8 +724,52 @@ public class GoldenStoreFS {
     section("verifying", toJson(scripts));
   }
 
+  // ---------------------------------------------------------------- RAMDirectory(FSDirectory, IOContext)
+  static void ramFrom() throws Exception {
+    List<Object> scripts = new ArrayList<Object>();
+    for (int s = 0; s < 40; s++) {
+      Path p = base.resolve("r" + s);
+      FSDirectory d = ri(2) == 0 ? new NIOFSDirectory(p) : new SimpleFSDirectory(p);
+      List<Object> files = new ArrayList<Object>();
+      for (int i = ri(6); i > 0; i--) {
+        String name = pick(FILES);
+        byte[] data = randomBytes(pick(new int[] {0, 1, 5, 100, 1024, 1025, 3000}));
+        Files.write(p.resolve(name), data);
+        files.add(L(name, hex(data)));
+      }
+      List<Object> dirs = new ArrayList<Object>();
+      for (int i = ri(3); i > 0; i--) {
+        String name = "sub" + ri(3);
+        Files.createDirectories(p.resolve(name));
+        Files.write(p.resolve(name).resolve("inner"), new byte[] {1, 2, 3});
+        dirs.add(name);
+      }
+      boolean close = ri(6) == 0;
+      int c = ri(4);
+      if (close) d.close();
+      String result = res(() -> {
+        RAMDirectory r = new RAMDirectory(d, ctx(c));
+        String[] names = r.listAll();
+        Arrays.sort(names);
+        StringBuilder b = new StringBuilder(Arrays.toString(names));
+        for (String n : names) {
+          IndexInput in = r.openInput(n, IOContext.DEFAULT);
+          byte[] data = new byte[(int) in.length()];
+          in.readBytes(data, 0, data.length);
+          in.close();
+          b.append(' ').append(n).append(':').append(r.fileLength(n)).append(':').append(hex(data));
+        }
+        return b.toString();
+      });
+      scripts.add(L(L(files, dirs, close, c), norm(result)));
+      if (!close) d.close();
+      IOUtils.rm(p);
+    }
+    section("ramFrom", toJson(scripts));
+  }
+
   // ---------------------------------------------------------------- IOUtils.fsync / rm / deleteFiles*
-  static final String[] UPATHS = {"f1", "f2", "t", "t/a", "t/b", "t/b/c", "t/b/d", "missing", "u/v/w"};
+  static final String[] UPATHS = {"f1", "f2", "t", "t/a", "t/b", "t/b/c", "t/b/d", "missing", "u/v/w", "l1", "l2"};
 
   static void fsutil() throws Exception {
     List<Object> scripts = new ArrayList<Object>();
@@ -670,39 +781,47 @@ public class GoldenStoreFS {
         int k = ri(100);
         List<Object> op;
         String result;
-        if (k < 20) {
+        if (k < 17) {
           String name = pick(UPATHS);
           op = L("file", name, ri(100));
           result = res(() -> { Path q = p.resolve(name); Files.createDirectories(q.getParent()); Files.write(q, new byte[(Integer) op.get(2)]); return "ok"; });
-        } else if (k < 30) {
+        } else if (k < 25) {
           String name = pick(UPATHS);
           op = L("dir", name);
           result = res(() -> { Files.createDirectories(p.resolve(name)); return "ok"; });
+        } else if (k < 35) {
+          String name = pick(UPATHS), target = pick(UPATHS);
+          op = L("symlink", name, target);
+          result = res(() -> { Files.createSymbolicLink(p.resolve(name), java.nio.file.Paths.get(target)); return "ok"; });
         } else if (k < 50) {
           String name = pick(UPATHS);
           boolean isDir = ri(2) == 0;
           op = L("fsync", name, isDir);
           result = res(() -> { IOUtils.fsync(p.resolve(name), isDir); return "ok"; });
-        } else if (k < 62) {
+        } else if (k < 60) {
           List<Object> names = new ArrayList<Object>();
           for (int j = 1 + ri(3); j > 0; j--) names.add(ri(8) == 0 ? null : pick(UPATHS));
           op = L("rm", names);
           result = res(() -> { IOUtils.rm(paths(p, names)); return "ok"; });
-        } else if (k < 74) {
+        } else if (k < 70) {
           List<Object> names = new ArrayList<Object>();
           for (int j = 1 + ri(3); j > 0; j--) names.add(ri(8) == 0 ? null : pick(UPATHS));
           op = L("deleteFilesIfExist", names);
           result = res(() -> { IOUtils.deleteFilesIfExist(paths(p, names)); return "ok"; });
-        } else if (k < 82) {
+        } else if (k < 77) {
           List<Object> names = new ArrayList<Object>();
           for (int j = 1 + ri(3); j > 0; j--) names.add(ri(8) == 0 ? null : pick(UPATHS));
           op = L("deleteFilesIfExistColl", names);
           result = res(() -> { IOUtils.deleteFilesIfExist(Arrays.asList(paths(p, names))); return "ok"; });
-        } else if (k < 90) {
+        } else if (k < 84) {
           List<Object> names = new ArrayList<Object>();
           for (int j = 1 + ri(3); j > 0; j--) names.add(ri(8) == 0 ? null : pick(UPATHS));
           op = L("deleteFilesIgnoringExceptions", names);
           result = res(() -> { IOUtils.deleteFilesIgnoringExceptions(paths(p, names)); return "ok"; });
+        } else if (k < 90) {
+          String name = pick(UPATHS);
+          op = L("isDir", name);
+          result = res(() -> "" + Files.isDirectory(p.resolve(name)));
         } else {
           op = L("tree");
           result = res(() -> { List<String> l = new ArrayList<String>(); tree(p, p, l); Collections.sort(l); return l.toString(); });
@@ -715,6 +834,275 @@ public class GoldenStoreFS {
     section("fsutil", toJson(scripts));
   }
 
+
+  // ---------------------------------------------------------------- constructors
+  static void ctors() throws Exception {
+    List<Object> out = new ArrayList<Object>();
+    Files.write(base.resolve("cfile"), new byte[] {1});
+    int id = 0;
+    int[] chunks = {-1, 0, 1, 5, 30, 31, 1000, 1 << 30, Integer.MAX_VALUE};
+    for (int cls = 0; cls < 3; cls++) {
+      for (int variant = 0; variant < 4; variant++) {
+        if (cls < 2 && variant > 1) continue;
+        for (int lfi = -1; lfi < 5; lfi++) {
+          if ((variant == 0 || variant == 2) && lfi != -1) continue;
+          if ((variant == 1 || variant == 3) && lfi == -1) continue;
+          for (int ci = 0; ci < chunks.length; ci++) {
+            if (variant < 2 && cls == 2 && variant == 0 && ci > 0) continue;
+            if (!(cls == 2 && variant >= 2) && ci > 0) continue;
+            for (int pk = 0; pk < 3; pk++) {
+              final int cid = id++, c = cls, v = variant, l = lfi, chunk = chunks[ci], pkind = pk;
+              LockFactory[] lfs = {SimpleFSLockFactory.INSTANCE, NativeFSLockFactory.INSTANCE, NoLockFactory.INSTANCE, new SingleInstanceLockFactory(), null};
+              Path q = pk == 0 ? base.resolve("c" + cid) : pk == 1 ? base.resolve("cfile") : base.resolve("cn" + cid).resolve("x").resolve("y");
+              String result = res(() -> {
+                FSDirectory d;
+                LockFactory lf = l >= 0 ? lfs[l] : null;
+                if (c == 0) d = v == 0 ? new SimpleFSDirectory(q) : new SimpleFSDirectory(q, lf);
+                else if (c == 1) d = v == 0 ? new NIOFSDirectory(q) : new NIOFSDirectory(q, lf);
+                else if (v == 0) d = new MMapDirectory(q);
+                else if (v == 1) d = new MMapDirectory(q, lf);
+                else if (v == 2) d = new MMapDirectory(q, chunk);
+                else d = new MMapDirectory(q, lf, chunk);
+                String s = d.toString();
+                if (d instanceof MMapDirectory) s += " max=" + ((MMapDirectory) d).getMaxChunkSize();
+                d.close();
+                return s;
+              });
+              out.add(L(L(cls, variant, lfi, chunk, pk, cid), norm(result)));
+              if (pk != 1) IOUtils.rm(q.getParent().equals(base) ? q : base.resolve("cn" + cid));
+            }
+          }
+        }
+      }
+    }
+    section("ctors", toJson(out));
+  }
+
+  // ---------------------------------------------------------------- who owns the file: clones, slices, close
+  static void cloneClose() throws Exception {
+    List<Object> scripts = new ArrayList<Object>();
+    int id = 5000;
+    for (int s = 0; s < 120; s++) {
+      int kind = s % 3;
+      int chunk = pick(new int[] {1, 2, 3, 4, 5, 7, 8, 16, 33, 64, 1000});
+      Path p = base.resolve("s" + id++);
+      FSDirectory d = make(kind, p, chunk);
+      int size = pick(new int[] {0, 1, 5, 9, 40});
+      byte[] data = new byte[size];
+      for (int i = 0; i < size; i++) data[i] = (byte) (i * 13 + s);
+      Files.write(p.resolve("a"), data);
+      IndexInput in = d.openInput("a", IOContext.DEFAULT);
+      Session sess = new Session(in);
+      List<Object> ops = new ArrayList<Object>();
+      ops.add(L(L("new", kind, chunk, size, id - 1), "ok"));
+      for (int i = 0; i < 25; i++) ops.add(sess.nextBiased());
+      try { in.close(); } catch (Throwable t) { }
+      d.close();
+      IOUtils.rm(p);
+      scripts.add(ops);
+    }
+    section("cloneClose", toJson(scripts));
+  }
+
+  // ---------------------------------------------------------------- SimpleFSIndexInput / NIOFSIndexInput on a channel, readInternal
+  static void directIn() throws Exception {
+    List<Object> scripts = new ArrayList<Object>();
+    for (int s = 0; s < 80; s++) {
+      int kind = s % 2;
+      Path f = base.resolve("di" + s);
+      int n = pick(new int[] {0, 1, 10, 100, 1024, 5000, 16384, 16385, 20000, 40000});
+      byte[] data = new byte[n];
+      for (int i = 0; i < n; i++) data[i] = (byte) (i * 31 + 7 + s);
+      Files.write(f, data);
+      int off = ri(4) == 0 ? ri(n + 3) : 0;
+      int length = Math.max(0, n - off + pick(new int[] {0, 0, 0, -3, 1, 40}));
+      int bufSize = pick(new int[] {8, 16, 1024, 20000});
+      Closeable ch;
+      IndexInput in;
+      if (kind == 0) {
+        SeekableByteChannel c = Files.newByteChannel(f, StandardOpenOption.READ);
+        ch = c;
+        in = new SimpleFSDirectory.SimpleFSIndexInput("direct", c, off, length, bufSize);
+      } else {
+        FileChannel c = FileChannel.open(f, StandardOpenOption.READ);
+        ch = c;
+        in = new NIOFSDirectory.NIOFSIndexInput("direct", c, off, length, bufSize);
+      }
+      Session sess = new Session(in);
+      List<Object> ops = new ArrayList<Object>();
+      ops.add(L(L("new", kind, n, s, off, length, bufSize), in.toString() + " " + in.length()));
+      for (int i = 0; i < 30; i++) {
+        int l = (int) Math.min(in.length(), 100000);
+        int k = ri(100);
+        List<Object> op;
+        if (k < 18) op = L("rb");
+        else if (k < 40) op = L("rbs", pick(new int[] {0, 1, 7, 60, 1023, 1024, 1025, 16383, 16384, 16385, 20000, 40000}), ri(4), ri(3));
+        else if (k < 55) op = L("seek", pick(new int[] {0, l, l + 1, ri(l + 1), ri(l + 1), -1, l - 1}));
+        else if (k < 72) op = L("ri2", pick(new int[] {0, 1, 5, 16384, 16385, 20000, 40000, l, l + 1}), ri(4));
+        else if (k < 82) op = L("fp");
+        else if (k < 90) op = L("str");
+        else op = L("len");
+        ops.add(L(op, sess.run(op)));
+      }
+      ch.close();
+      scripts.add(ops);
+      IOUtils.rm(f);
+    }
+    section("directIn", toJson(scripts));
+  }
+
+  // ---------------------------------------------------------------- FileChannel / FileLock / Files.newOutputStream
+  static void channels() throws Exception {
+    List<Object> scripts = new ArrayList<Object>();
+    String[] names = {"ch1", "ch2", "chdir", "missing/x"};
+    List<Object> metas = new ArrayList<Object>();
+    for (int s = 0; s < 80; s++) {
+      Path p = base.resolve("k" + s);
+      Files.createDirectories(p);
+      Files.createDirectories(p.resolve("chdir"));
+      List<Object> meta = new ArrayList<Object>();
+      for (String nm : new String[] {"ch1", "ch2"}) {
+        if (ri(3) > 0) {
+          int n = pick(new int[] {0, 1, 7, 100, 300});
+          byte[] data = new byte[n];
+          for (int i = 0; i < n; i++) data[i] = (byte) (i * 17 + s);
+          Files.write(p.resolve(nm), data);
+          meta.add(n);
+        } else {
+          meta.add(-1);
+        }
+      }
+      metas.add(meta);
+      FileChannel[] chs = new FileChannel[3];
+      FileLock[] locks = new FileLock[3];
+      List<Object> ops = new ArrayList<Object>();
+      for (int i = 0; i < 30; i++) {
+        int k = ri(100), ci = ri(3);
+        List<Object> op;
+        String result;
+        if (k < 12 || chs[ci] == null) {
+          int opts = 1 + ri(7);
+          String name = pick(names);
+          op = L("open", ci, opts, name);
+          result = res(() -> {
+            List<StandardOpenOption> o = new ArrayList<StandardOpenOption>();
+            if ((opts & 1) != 0) o.add(StandardOpenOption.READ);
+            if ((opts & 2) != 0) o.add(StandardOpenOption.WRITE);
+            if ((opts & 4) != 0) o.add(StandardOpenOption.CREATE);
+            chs[ci] = FileChannel.open(p.resolve(name), o.toArray(new StandardOpenOption[0]));
+            return "ok";
+          });
+        } else if (k < 20) {
+          op = L("size", ci);
+          result = res(() -> "" + chs[ci].size());
+        } else if (k < 26) {
+          op = L("pos", ci);
+          result = res(() -> "" + chs[ci].position());
+        } else if (k < 32) {
+          int np = ri(400) - 5;
+          op = L("setpos", ci, np);
+          result = res(() -> { chs[ci].position(np); return "ok"; });
+        } else if (k < 50) {
+          int cap = pick(new int[] {0, 1, 5, 50, 400}), off = ri(3);
+          op = L("read", ci, cap, off);
+          result = res(() -> {
+            ByteBuffer bb = ByteBuffer.allocate(cap);
+            bb.position(Math.min(off, cap));
+            int n = chs[ci].read(bb);
+            return n + "@" + bb.position() + "|" + dig(bb.array()) + "|pos=" + chs[ci].position();
+          });
+        } else if (k < 62) {
+          int cap = pick(new int[] {0, 1, 5, 50, 400}), at = ri(420) - 10;
+          op = L("readAt", ci, cap, at);
+          result = res(() -> {
+            ByteBuffer bb = ByteBuffer.allocate(cap);
+            int n = chs[ci].read(bb, at);
+            return n + "@" + bb.position() + "|" + dig(bb.array()) + "|pos=" + chs[ci].position();
+          });
+        } else if (k < 66) {
+          op = L("force", ci);
+          result = res(() -> { chs[ci].force(true); return "ok"; });
+        } else if (k < 76) {
+          op = L("tryLock", ci);
+          result = res(() -> { FileLock l = chs[ci].tryLock(); locks[ci] = l; return l == null ? "null" : "lock valid=" + l.isValid(); });
+        } else if (k < 82) {
+          op = L("release", ci);
+          result = res(() -> { locks[ci].release(); return "ok valid=" + locks[ci].isValid(); });
+        } else if (k < 86) {
+          op = L("valid", ci);
+          result = res(() -> "" + locks[ci].isValid());
+        } else if (k < 92) {
+          op = L("close", ci);
+          result = res(() -> { chs[ci].close(); return "ok open=" + chs[ci].isOpen() + (locks[ci] != null ? " valid=" + locks[ci].isValid() : ""); });
+        } else if (k < 95) {
+          op = L("isOpen", ci);
+          result = res(() -> "" + chs[ci].isOpen());
+        } else {
+          int mp = ri(120) - 5, ms = ri(200) - 5;
+          op = L("map", ci, mp, ms);
+          result = res(() -> {
+            ByteBuffer m = chs[ci].map(FileChannel.MapMode.READ_ONLY, mp, ms);
+            byte[] b = new byte[m.remaining()];
+            m.get(b);
+            return m.capacity() + "|" + dig(b);
+          });
+        }
+        ops.add(L(op, norm(result)));
+      }
+      for (int i = 0; i < 3; i++) if (chs[i] != null) { try { chs[i].close(); } catch (Throwable t) { } }
+      IOUtils.rm(p);
+      scripts.add(ops);
+    }
+    section("channels", toJson(scripts));
+    section("channelsMeta", toJson(metas));
+
+    scripts = new ArrayList<Object>();
+    for (int s = 0; s < 60; s++) {
+      Path p = base.resolve("o" + s);
+      Files.createDirectories(p.resolve("chdir"));
+      OutputStream[] os = new OutputStream[1];
+      List<Object> ops = new ArrayList<Object>();
+      for (int i = 0; i < 20; i++) {
+        int k = ri(100);
+        List<Object> op;
+        String result;
+        if (k < 14 || os[0] == null) {
+          String name = pick(new String[] {"o1", "o2", "chdir", "missing/x", "o1"});
+          op = L("open", name);
+          result = res(() -> { os[0] = Files.newOutputStream(p.resolve(name)); return "ok"; });
+        } else if (k < 40) {
+          int b = ri(300) - 20;
+          op = L("w", b);
+          result = res(() -> { os[0].write(b); return "ok"; });
+        } else if (k < 70) {
+          int dl = ri(12), off = ri(dl + 3) - 1, len = ri(8) - (ri(8) == 0 ? 1 : 0);
+          op = L("wa", dl, off, len);
+          result = res(() -> {
+            byte[] a = new byte[dl];
+            for (int j = 0; j < dl; j++) a[j] = (byte) (j + 1);
+            os[0].write(a, off, len);
+            return "ok";
+          });
+        } else if (k < 80) {
+          op = L("flush");
+          result = res(() -> { os[0].flush(); return "ok"; });
+        } else if (k < 90) {
+          op = L("close");
+          result = res(() -> { os[0].close(); return "ok"; });
+        } else {
+          op = L("size", pick(new String[] {"o1", "o2"}));
+          String nm = (String) op.get(1);
+          result = res(() -> "" + Files.size(p.resolve(nm)));
+        }
+        ops.add(L(op, norm(result)));
+      }
+      try { if (os[0] != null) os[0].close(); } catch (Throwable t) { }
+      IOUtils.rm(p);
+      scripts.add(ops);
+    }
+    section("ostream", toJson(scripts));
+  }
+
   static Path[] paths(Path p, List<Object> names) {
     Path[] r = new Path[names.size()];
     for (int i = 0; i < r.length; i++) r[i] = names.get(i) == null ? null : p.resolve((String) names.get(i));
@@ -722,7 +1110,9 @@ public class GoldenStoreFS {
   }
 
   static void tree(Path root, Path q, List<String> out) throws IOException {
-    for (String n : FSDirectory.listAll(q)) {
+    String[] names = FSDirectory.listAll(q);
+    Arrays.sort(names);
+    for (String n : names) {
       Path c = q.resolve(n);
       boolean dir = Files.isDirectory(c);
       out.add(root.relativize(c) + (dir ? "/" : ":" + Files.size(c)));
@@ -739,6 +1129,11 @@ public class GoldenStoreFS {
     locks();
     verifying();
     fsutil();
+    ramFrom();
+    ctors();
+    cloneClose();
+    directIn();
+    channels();
     System.out.println(sb.append("}").toString());
   }
 }

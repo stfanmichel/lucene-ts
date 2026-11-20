@@ -24,7 +24,9 @@
 // (libuv's scandir sorts) whereas Java returns readdir order, which is unspecified.
 
 import * as fs from "node:fs";
+import * as nodePath from "node:path";
 import {
+  IndexOutOfBoundsException,
   AccessDeniedException,
   AtomicMoveNotSupportedException,
   ClosedChannelException,
@@ -123,6 +125,26 @@ function lstatOrNull(p: string): fs.Stats | null {
   }
 }
 
+/** Files.createAndCheckIsDirectory: createDirectory; EEXIST is fine for a directory, a symbolic link to a directory included (JDK 21, checked against the golden) */
+function createAndCheckIsDirectory(dir: string): void {
+  try {
+    fs.mkdirSync(dir);
+  } catch (e) {
+    const t = translateToIOException(e, dir);
+    if (t instanceof FileAlreadyExistsException) {
+      let isDir = false;
+      try {
+        isDir = fs.statSync(dir).isDirectory();
+      } catch {
+        isDir = false;
+      }
+      if (!isDir) throw t;
+      return;
+    }
+    throw t;
+  }
+}
+
 /** The channel-backed OutputStream returned by Files.newOutputStream. */
 class ChannelOutputStream implements OutputStream {
   private fd: number | null;
@@ -132,6 +154,14 @@ class ChannelOutputStream implements OutputStream {
   write(b: number): void;
   write(b: Uint8Array, off: number, len: number): void;
   write(b: number | Uint8Array, off?: number, len?: number): void {
+    if (typeof b !== "number") {
+      // Objects.checkFromIndexSize(off, len, b.length), then len == 0 returns before the channel is touched
+      const o = off!, n = len!;
+      if (o < 0 || n < 0 || o + n > b.length) {
+        throw new IndexOutOfBoundsException("Range [" + o + ", " + o + " + " + n + ") out of bounds for length " + b.length);
+      }
+      if (n === 0) return;
+    }
     if (this.fd === null) throw new ClosedChannelException();
     const arr = typeof b === "number" ? Uint8Array.of(b & 0xff) : b;
     let o = typeof b === "number" ? 0 : off!;
@@ -160,17 +190,38 @@ class ChannelOutputStream implements OutputStream {
 export class Files {
   private constructor() {}
 
-  /** Files.createDirectories */
+  /**
+   * Files.createDirectories: create the directory and any missing parents; like the JDK, find the deepest existing
+   * ancestor first (a non-NoSuchFile failure of that probe, e.g. ENOTDIR, is reported for the ANCESTOR), then create
+   * the missing components one by one. An existing symbolic link (even to a directory) is a
+   * FileAlreadyExistsException.
+   */
   static createDirectories(dir: string): void {
-    const st = fs.statSync(dir, { throwIfNoEntry: false });
-    if (st !== undefined) {
-      if (st.isDirectory()) return;
-      throw new FileAlreadyExistsException(dir);
-    }
     try {
-      fs.mkdirSync(dir, { recursive: true });
+      createAndCheckIsDirectory(dir);
+      return;
     } catch (e) {
-      throw translateToIOException(e, dir);
+      if (e instanceof FileAlreadyExistsException) throw e;
+      // parent may not exist or other reason
+    }
+    const abs = nodePath.resolve(dir);
+    let parent: string | null = nodePath.dirname(abs);
+    if (parent === abs) parent = null;
+    while (parent !== null) {
+      try {
+        fs.accessSync(parent);
+        break;
+      } catch (e) {
+        if ((e as { code?: string }).code !== "ENOENT") throw translateToIOException(e, parent);
+      }
+      const up: string = nodePath.dirname(parent);
+      parent = up === parent ? null : up;
+    }
+    if (parent === null) throw new FileSystemException(abs, null, "Unable to determine if root directory exists");
+    let child = parent;
+    for (const name of nodePath.relative(parent, abs).split("/")) {
+      child = nodePath.join(child, name);
+      createAndCheckIsDirectory(child);
     }
   }
 
@@ -210,14 +261,24 @@ export class Files {
     return fs.existsSync(p);
   }
 
-  /** Files.notExists (false when existence cannot be determined; here: same as !exists) */
+  /** Files.notExists */
   static notExists(p: string): boolean {
-    return !fs.existsSync(p);
+    // true only for NoSuchFileException (ENOENT); other failures (ELOOP, ENOTDIR...) mean "unknown" → false
+    try {
+      fs.statSync(p);
+      return false;
+    } catch (e) {
+      return (e as { code?: string }).code === "ENOENT";
+    }
   }
 
   /** Files.isDirectory */
   static isDirectory(p: string): boolean {
-    return fs.statSync(p, { throwIfNoEntry: false })?.isDirectory() ?? false;
+    try {
+      return fs.statSync(p).isDirectory();
+    } catch {
+      return false; // any IOException (missing, ELOOP, ENOTDIR...) is false
+    }
   }
 
   /** Files.move(source, target, ATOMIC_MOVE) */
