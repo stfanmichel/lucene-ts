@@ -427,7 +427,7 @@ test("ByteBufferIndexInput behaves like the Java class (clone tracking, cleaner,
 test("SimpleFSLockFactory and NativeFSLockFactory behave like the Java classes", () => {
   Lock.LOCK_POLL_INTERVAL = 1;
   const scripts: Op[][] = golden.locks;
-  assert.ok(scripts.length === 80);
+  assert.ok(scripts.length === 82);
   scripts.forEach((ops, si) => {
     const [, kind, id, nio] = ops[0][0] as [string, number, number, number];
     const p = join(BASE, "s" + id);

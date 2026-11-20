@@ -685,6 +685,41 @@ public class GoldenStoreFS {
         scripts.add(ops);
       }
     }
+    // fixed scripts: the lock file is replaced by a non-empty directory while the lock is held
+    for (int kind = 0; kind < 2; kind++) {
+      Path p = base.resolve("s" + id++);
+      LockFactory lf = kind == 0 ? SimpleFSLockFactory.INSTANCE : NativeFSLockFactory.INSTANCE;
+      FSDirectory d = new NIOFSDirectory(p, lf);
+      Lock[] locks = new Lock[3];
+      List<Object> ops = new ArrayList<Object>();
+      ops.add(L(L("ctor", kind, id - 1, 1), norm(d.toString())));
+      Object[][] fixed = {
+        {"make", "write.lock"}, {"obtain"}, {"isLocked"}, {"rmfile", "write.lock"}, {"mkdirLock", "write.lock"},
+        {"close"}, {"list"}, {"isLocked"}, {"obtain"}, {"make", "write.lock"}, {"isLocked"}, {"obtain"}, {"close"}, {"close"},
+      };
+      for (Object[] f : fixed) {
+        List<Object> op;
+        String result;
+        final String arg = f.length > 1 ? (String) f[1] : null;
+        switch ((String) f[0]) {
+          case "make": op = L("make", 0, arg); result = res(() -> { locks[0] = d.makeLock(arg); return locks[0].toString(); }); break;
+          case "obtain": op = L("obtain", 0); result = res(() -> "" + locks[0].obtain()); break;
+          case "isLocked": op = L("isLocked", 0); result = res(() -> "" + locks[0].isLocked()); break;
+          case "close": op = L("close", 0); result = res(() -> { locks[0].close(); return "ok"; }); break;
+          case "rmfile": op = L("rmfile", arg); result = res(() -> "" + Files.deleteIfExists(p.resolve(arg))); break;
+          case "mkdirLock":
+            op = L("mkdirLock", arg);
+            result = res(() -> { Path q = p.resolve(arg); Files.createDirectories(q); Files.write(q.resolve("x"), new byte[] {1}); return "ok"; });
+            break;
+          default: op = L("list"); result = res(() -> { String[] l = FSDirectory.listAll(p); Arrays.sort(l); return Arrays.toString(l); });
+        }
+        ops.add(L(op, norm(result)));
+      }
+      for (Lock l : locks) { if (l != null) { try { l.close(); } catch (Throwable t) { } } }
+      d.close();
+      IOUtils.rm(p);
+      scripts.add(ops);
+    }
     section("locks", toJson(scripts));
   }
 
