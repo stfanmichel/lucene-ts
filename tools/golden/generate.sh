@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates test/golden/util.json, util-refs.json, util-sorters.json, store-data.json, store-io.json, store-dir.json and store-more.json from the ORIGINAL Lucene 5.2.1 Java classes.
+# Regenerates test/golden/util.json, util-refs.json, util-sorters.json, store-data.json, store-io.json, store-dir.json, store-more.json and store-fs.json from the ORIGINAL Lucene 5.2.1 Java classes.
 #
 # Usage: tools/golden/generate.sh [path/to/lucene-5.2.1] [scratch dir]
 #
@@ -30,7 +30,10 @@ javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
   "$STORE/RAMDirectory.java" "$STORE/RAMFile.java" "$STORE/RAMInputStream.java" "$STORE/RAMOutputStream.java" \
   "$STORE/Lock.java" "$STORE/NoLockFactory.java" "$STORE/SingleInstanceLockFactory.java" "$STORE/FilterDirectory.java" \
   "$STORE/TrackingDirectoryWrapper.java" "$UTIL/IOUtils.java" "$UTIL/Accountables.java" "$STORE/OutputStreamIndexOutput.java" "$STORE/RateLimiter.java" "$STORE/RateLimitedIndexOutput.java" \
-  "$STORE/FileSwitchDirectory.java" "$STORE/NRTCachingDirectory.java" "$HERE/GoldenStoreDir.java" "$HERE/GoldenStoreMore.java"
+  "$STORE/FileSwitchDirectory.java" "$STORE/NRTCachingDirectory.java" "$HERE/GoldenStoreDir.java" "$HERE/GoldenStoreMore.java" \
+  "$STORE/FSDirectory.java" "$STORE/SimpleFSDirectory.java" "$STORE/NIOFSDirectory.java" "$STORE/MMapDirectory.java" \
+  "$STORE/ByteBufferIndexInput.java" "$STORE/SimpleFSLockFactory.java" "$STORE/NativeFSLockFactory.java" \
+  "$STORE/VerifyingLockFactory.java" "$HERE/org/apache/lucene/store/GoldenStoreFS.java"
 
 # tests.seed makes StringHelper.randomId() and BytesRef.hashCode() reproducible
 java -Dtests.seed=DEADBEEF -cp "$SCRATCH/classes" Golden > "$ROOT/test/golden/util.json"
@@ -62,3 +65,10 @@ echo "wrote $ROOT/test/golden/store-dir.json"
 # OutputStreamIndexOutput, RateLimiter, RateLimitedIndexOutput, FileSwitchDirectory, NRTCachingDirectory, Double.toString.
 java -cp "$SCRATCH/classes" GoldenStoreMore > "$ROOT/test/golden/store-more.json"
 echo "wrote $ROOT/test/golden/store-more.json"
+
+# File-system directories, file locks, ByteBufferIndexInput, VerifyingLockFactory, IOUtils.fsync/rm, java.nio.ByteBuffer.
+# Works in a temporary directory (replaced by "<D>" in the recorded strings); assertions on, like Lucene's tests.
+FSDIR="$(mktemp -d)"
+java -ea:org.apache.lucene... -cp "$SCRATCH/classes" org.apache.lucene.store.GoldenStoreFS "$FSDIR" > "$ROOT/test/golden/store-fs.json"
+rm -rf "$FSDIR"
+echo "wrote $ROOT/test/golden/store-fs.json"

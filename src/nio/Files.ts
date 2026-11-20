@@ -55,6 +55,7 @@ const STRERROR: Record<string, string> = {
   ELOOP: "Too many levels of symbolic links",
   ENAMETOOLONG: "File name too long",
   EBUSY: "Device or resource busy",
+  ENODEV: "No such device",
 };
 
 /** The C strerror text for a Node error (what UnixException.errorString() gives). */
@@ -109,11 +110,16 @@ function wrap<T>(file: string, other: string | null, body: () => T): T {
   }
 }
 
+/**
+ * UnixFileAttributes.get(file, false): null when the file does not exist (ENOENT), the translated java.nio.file
+ * exception for any other failure (ENOTDIR, EACCES...), as Files.delete / deleteIfExists propagate it.
+ */
 function lstatOrNull(p: string): fs.Stats | null {
   try {
     return fs.lstatSync(p);
-  } catch {
-    return null;
+  } catch (e) {
+    if ((e as { code?: string }).code === "ENOENT") return null;
+    throw translateToIOException(e, p);
   }
 }
 

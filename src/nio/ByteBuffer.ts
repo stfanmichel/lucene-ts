@@ -120,8 +120,8 @@ export class ByteBuffer {
 
   private checkIndex(i: number, nb: number): number {
     if (i < 0 || nb > this.lim - i) {
-      // JDK 21: get(int) uses Objects.checkIndex (with message), the multi-byte forms throw a bare exception
-      throw new IndexOutOfBoundsException(nb === 1 ? "Index " + i + " out of bounds for length " + this.lim : undefined);
+      // JDK 21 (checked against the golden): Buffer.checkIndex throws a bare IndexOutOfBoundsException
+      throw new IndexOutOfBoundsException();
     }
     return i;
   }

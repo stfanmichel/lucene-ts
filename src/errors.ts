@@ -247,3 +247,11 @@ export function getSuppressed(exception: unknown): unknown[] {
   const s = (exception as { suppressed?: unknown[] } | null)?.suppressed;
   return s === undefined ? [] : s.slice();
 }
+
+/**
+ * Throwable.getMessage(): `null` when the exception was created without a message (a JS Error always has a
+ * `message` string, "" when absent, so the own-property test tells "no message" from an empty message).
+ */
+export function getMessage(e: Error): string | null {
+  return Object.prototype.hasOwnProperty.call(e, "message") ? e.message : null;
+}

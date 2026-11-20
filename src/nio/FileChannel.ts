@@ -127,8 +127,9 @@ export class FileChannel {
    * of bytes read, or -1 at end of file.
    */
   read(dst: ByteBuffer, position?: number): number {
-    const fd = this.ensureOpenFd();
+    // FileChannelImpl.read(dst, position) checks the position before the channel is open
     if (position !== undefined && position < 0) throw new IllegalArgumentException("Negative position");
+    const fd = this.ensureOpenFd();
     const n = dst.remaining();
     if (n === 0) return 0;
     const at = position ?? this.pos;
@@ -173,6 +174,8 @@ export class FileChannel {
     const data = new Uint8Array(size);
     let done = 0;
     try {
+      // mmap(2) of a directory fails with ENODEV; a zero-size mapping never calls mmap
+      if (size > 0 && fs.fstatSync(fd).isDirectory()) throw Object.assign(new Error("ENODEV"), { code: "ENODEV" });
       while (done < size) {
         const n = fs.readSync(fd, data, done, size - done, position + done);
         if (n === 0) break;

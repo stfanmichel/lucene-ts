@@ -19,7 +19,7 @@
 //
 // Deviation: the channel is the FileChannel emulation of src/nio.
 
-import { EOFException, IllegalArgumentException, IOException } from "../errors.js";
+import { EOFException, IllegalArgumentException, getMessage, IOException } from "../errors.js";
 import { ByteBuffer } from "../nio/ByteBuffer.js";
 import { FileChannel } from "../nio/FileChannel.js";
 import { resolvePath } from "../nio/Files.js";
@@ -162,7 +162,7 @@ export class NIOFSIndexInput extends BufferedIndexInput {
       lassert(() => readLength === 0);
     } catch (ioe) {
       if (!(ioe instanceof IOException)) throw ioe;
-      throw new IOException(ioe.message + ": " + this.toString(), { cause: ioe });
+      throw new IOException(getMessage(ioe) + ": " + this.toString(), { cause: ioe });
     }
   }
 

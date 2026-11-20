@@ -32,6 +32,6 @@ export const ASSERTIONS_ENABLED: boolean = process.env["LUCENE_ASSERTIONS"] !== 
  */
 export function lassert(check: () => boolean, message?: string): void {
   if (ASSERTIONS_ENABLED && !check()) {
-    throw new AssertionError(message ?? "assertion failed");
+    throw new AssertionError(message); // Java: no message for a bare `assert cond`
   }
 }
