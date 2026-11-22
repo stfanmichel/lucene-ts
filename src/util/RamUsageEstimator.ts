@@ -64,6 +64,15 @@ export const RamUsageEstimator = {
   },
 
   /**
+   * shallowSizeOf(Object[]) / shallowSizeOf(primitive[]): the size of the array itself, not of what it references.
+   * Typed arrays are primitive arrays; plain arrays hold references (4 bytes each, compressed oops).
+   */
+  shallowSizeOf(arr: { length: number; BYTES_PER_ELEMENT?: number }): number {
+    const el = arr.BYTES_PER_ELEMENT ?? 4; // NUM_BYTES_OBJECT_REF
+    return RamUsageEstimator.alignObjectSize(16 + el * arr.length);
+  },
+
+  /**
    * Returns <code>size</code> in human-readable units (GB, MB, KB or bytes).
    * Java formats the <code>float</code> quotient with DecimalFormat("0.#") (HALF_EVEN, Locale.ROOT).
    */

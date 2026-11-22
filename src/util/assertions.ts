@@ -30,8 +30,9 @@ export const ASSERTIONS_ENABLED: boolean = process.env["LUCENE_ASSERTIONS"] !== 
  * Port of Java's `assert cond : message`. The condition is passed as a
  * function so that expensive checks cost nothing when assertions are off.
  */
-export function lassert(check: () => boolean, message?: string): void {
+export function lassert(check: () => boolean, message?: string | (() => string)): void {
   if (ASSERTIONS_ENABLED && !check()) {
-    throw new AssertionError(message); // Java: no message for a bare `assert cond`
+    // Java: no message for a bare `assert cond`; the message is built lazily (it is only needed on failure)
+    throw new AssertionError(typeof message === "function" ? message() : message);
   }
 }

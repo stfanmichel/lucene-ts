@@ -57,6 +57,14 @@ export const Integer = {
   },
 } as const;
 
+// BigInt64Array wraps what is stored in it to 64 bits, which is exactly what Java's long arithmetic does.
+const BIT = new BigInt64Array(64);
+const LOW_MASK = new BigInt64Array(64);
+for (let i = 0; i < 64; i++) {
+  BIT[i] = 1n << BigInt(i);
+  LOW_MASK[i] = (1n << BigInt(i)) - 1n;
+}
+
 export const Long = {
   MIN_VALUE: -(1n << 63n),
   MAX_VALUE: (1n << 63n) - 1n,
@@ -88,6 +96,33 @@ export const Long = {
   /** The Java `>>>` operator on a long. */
   ushr(x: bigint, n: number): bigint {
     return BigInt.asIntN(64, BigInt.asUintN(64, x) >> BigInt(n & 63));
+  },
+
+  /** Long.numberOfLeadingZeros */
+  numberOfLeadingZeros(x: bigint): number {
+    const u = BigInt.asUintN(64, x);
+    const hi = Number(u >> 32n);
+    return hi !== 0 ? Math.clz32(hi) : 32 + Math.clz32(Number(u & 0xffffffffn));
+  },
+
+  /** The Java `<<` operator on a long: the count is taken modulo 64 and the result wraps. */
+  shl(x: bigint, n: number): bigint {
+    return BigInt.asIntN(64, x << BigInt(n & 63));
+  },
+
+  /** The Java `>>` operator on a long (arithmetic, count modulo 64). */
+  shr(x: bigint, n: number): bigint {
+    return x >> BigInt(n & 63);
+  },
+
+  /** `1L << n` (count modulo 64), from a table. */
+  bit(n: number): bigint {
+    return BIT[n & 63]!;
+  },
+
+  /** `(1L << n) - 1` (count modulo 64; n = 63 gives Long.MAX_VALUE), from a table. */
+  lowMask(n: number): bigint {
+    return LOW_MASK[n & 63]!;
   },
 
   /** Math.abs on a long (Long.MIN_VALUE stays Long.MIN_VALUE, as in Java). */
