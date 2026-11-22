@@ -288,7 +288,9 @@ public class GoldenBitSets {
   }
 
   static String dumpSparse(SparseFixedBitSet s) {
-    return s.length() + "/" + s.cardinality() + "/" + s.approximateCardinality() + "/" + s.ramBytesUsed() + "/" + s.nonZeroLongCount + "/" + listSparse(s);
+    String approx;
+    try { approx = Integer.toString(s.approximateCardinality()); } catch (Throwable t) { approx = ex(t); }
+    return s.length() + "/" + s.cardinality() + "/" + approx + "/" + s.ramBytesUsed() + "/" + s.nonZeroLongCount + "/" + listSparse(s);
   }
 
   static void sparse() throws Exception {
@@ -364,7 +366,7 @@ public class GoldenBitSets {
       List<String> ops = new ArrayList<>(), out = new ArrayList<>();
       ops.add("fixedOrNull"); out.add(Boolean.toString(BitSetIterator.getFixedBitSetOrNull(it) != null) + "/" + (BitSetIterator.getSparseFixedBitSetOrNull(it) != null) + "/" + (BitSetIterator.getFixedBitSetOrNull(DocIdSetIterator.empty()) != null) + "/" + (BitSetIterator.getSparseFixedBitSetOrNull(new IntIt(new int[0], 0)) != null));
       for (int k = 0; k < 25; k++) {
-        String op, res;
+        String op = "?", res;
         try {
           switch (r.nextInt(5)) {
             case 0: op = "doc"; res = Integer.toString(it.docID()); break;
@@ -372,7 +374,7 @@ public class GoldenBitSets {
             case 2: { int t = r.nextInt(n + 5) + (it.docID() < 0 ? 0 : it.docID()); op = "adv " + t; res = Integer.toString(it.advance(t)); break; }
             default: op = "next"; res = Integer.toString(it.nextDoc()); break;
           }
-        } catch (Throwable t) { op = "?"; res = ex(t); }
+        } catch (Throwable t) { res = ex(t); }
         ops.add(op); out.add(res);
       }
       cs(cfg, ops, out);

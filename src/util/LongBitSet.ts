@@ -21,7 +21,7 @@
 // int[] of words, far below 2^53); the overloaded set/clear/flip (index or range) are single methods told apart by
 // the arguments.
 
-import { IllegalArgumentException, NegativeArraySizeException } from "../errors.js";
+import { ArrayIndexOutOfBoundsException, IllegalArgumentException, NegativeArraySizeException } from "../errors.js";
 import { ArrayUtil } from "./ArrayUtil.js";
 import { lassert } from "./assertions.js";
 import { BitUtil } from "./BitUtil.js";
@@ -83,14 +83,22 @@ export class LongBitSet {
 
   /** Checks if the bits past numBits are clear. Some methods rely on this implicit assumption: search for "Depends on the ghost bits being clear!" */
   private verifyGhostBitsClear(): boolean {
+    // (a negative numWords makes Java's bits[i] throw: the reads are bounds checked)
     for (let i = this.numWords; i < this.bits.length; i++) {
-      if (this.bits[i] !== 0n) return false;
+      if (this.checkedWord(i) !== 0n) return false;
     }
 
     if ((this.numBits & 0x3f) === 0) return true;
 
     const mask = Long.shl(-1n, this.numBits);
-    return (this.bits[this.numWords - 1]! & mask) === 0n;
+    return (this.checkedWord(this.numWords - 1) & mask) === 0n;
+  }
+
+  private checkedWord(i: number): bigint {
+    if (i < 0 || i >= this.bits.length) {
+      throw new ArrayIndexOutOfBoundsException("Index " + i + " out of bounds for length " + this.bits.length);
+    }
+    return this.bits[i]!;
   }
 
   /** Returns the number of bits stored in this bitset. */

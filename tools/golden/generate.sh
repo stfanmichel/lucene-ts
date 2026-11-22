@@ -14,6 +14,7 @@ SCRATCH="${2:-$(mktemp -d)}"
 SRC="$LUCENE/core/src/java"
 UTIL="$SRC/org/apache/lucene/util"
 STORE="$SRC/org/apache/lucene/store"
+SEARCH="$SRC/org/apache/lucene/search"
 
 mkdir -p "$SCRATCH/classes"
 javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
@@ -36,7 +37,9 @@ javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
   "$STORE/VerifyingLockFactory.java" "$HERE/org/apache/lucene/store/GoldenStoreFS.java" \
   "$UTIL/SloppyMath.java" "$UTIL/NumericUtils.java" "$UTIL/SmallFloat.java" "$UTIL/PriorityQueue.java" "$UTIL/SentinelIntSet.java" \
   "$UTIL/MergedIterator.java" "$UTIL/SetOnce.java" "$UTIL/Counter.java" "$UTIL/RefCount.java" "$UTIL/ToStringUtils.java" \
-  "$UTIL/RamUsageEstimator.java" "$HERE/org/apache/lucene/util/GoldenUtilSmall.java"
+  "$UTIL/RamUsageEstimator.java" "$HERE/org/apache/lucene/util/GoldenUtilSmall.java" \
+  "$UTIL/FixedBitSet.java" "$UTIL/LongBitSet.java" "$UTIL/SparseFixedBitSet.java" "$UTIL/BitSet.java" "$UTIL/BitSetIterator.java" \
+  "$UTIL/BitDocIdSet.java" "$SEARCH/DocIdSet.java" "$SEARCH/DocIdSetIterator.java" "$HERE/org/apache/lucene/util/GoldenBitSets.java"
 
 # tests.seed makes StringHelper.randomId() and BytesRef.hashCode() reproducible
 java -Dtests.seed=DEADBEEF -cp "$SCRATCH/classes" Golden > "$ROOT/test/golden/util.json"
@@ -80,3 +83,7 @@ echo "wrote $ROOT/test/golden/store-fs.json"
 # RefCount, ToStringUtils, RamUsageEstimator.sizeOf, Float.toString): assertions on, compressed oops pinned.
 java -XX:+UseCompressedOops -ea:org.apache.lucene.util... -cp "$SCRATCH/classes" org.apache.lucene.util.GoldenUtilSmall > "$ROOT/test/golden/util-small.json"
 echo "wrote $ROOT/test/golden/util-small.json"
+
+# Bit sets (FixedBitSet, LongBitSet, SparseFixedBitSet, BitSetIterator, BitDocIdSet, DocIdSet, DocIdSetIterator), assertions on.
+java -XX:+UseCompressedOops -ea:org.apache.lucene... -cp "$SCRATCH/classes" org.apache.lucene.util.GoldenBitSets > "$ROOT/test/golden/bitsets.json"
+echo "wrote $ROOT/test/golden/bitsets.json"

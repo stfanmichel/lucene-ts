@@ -22,7 +22,7 @@
 // BASE_RAM_BYTES_USED is RamUsageEstimator.shallowSizeOfInstance(FixedBitSet.class) of a 64-bit JVM with compressed
 // oops: 12 (header) + 4 (bits) + 4 (numBits) + 4 (numWords) = 24.
 
-import { IllegalArgumentException, NegativeArraySizeException } from "../errors.js";
+import { ArrayIndexOutOfBoundsException, IllegalArgumentException, NegativeArraySizeException } from "../errors.js";
 import { DocIdSetIterator } from "../search/DocIdSetIterator.js";
 import { ArrayUtil } from "./ArrayUtil.js";
 import { lassert } from "./assertions.js";
@@ -122,14 +122,22 @@ export class FixedBitSet extends BitSet {
 
   /** Checks if the bits past numBits are clear. Some methods rely on this implicit assumption: search for "Depends on the ghost bits being clear!" */
   private verifyGhostBitsClear(): boolean {
+    // (a negative numWords makes Java's bits[i] throw: the reads are bounds checked)
     for (let i = this.numWords; i < this.bits.length; i++) {
-      if (this.bits[i] !== 0n) return false;
+      if (this.checkedWord(i) !== 0n) return false;
     }
 
     if ((this.numBits & 0x3f) === 0) return true;
 
     const mask = Long.shl(-1n, this.numBits);
-    return (this.bits[this.numWords - 1]! & mask) === 0n;
+    return (this.checkedWord(this.numWords - 1) & mask) === 0n;
+  }
+
+  private checkedWord(i: number): bigint {
+    if (i < 0 || i >= this.bits.length) {
+      throw new ArrayIndexOutOfBoundsException("Index " + i + " out of bounds for length " + this.bits.length);
+    }
+    return this.bits[i]!;
   }
 
   length(): number {

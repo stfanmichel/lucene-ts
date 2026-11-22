@@ -65,7 +65,7 @@ export class BitSetIterator extends DocIdSetIterator {
   }
 
   nextDoc(): number {
-    return this.advance(this.doc + 1);
+    return this.advance((this.doc + 1) | 0); // int overflow after NO_MORE_DOCS, as in Java
   }
 
   advance(target: number): number {

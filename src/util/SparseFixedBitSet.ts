@@ -23,7 +23,7 @@
 // BASE_RAM_BYTES_USED is shallowSizeOfInstance on a 64-bit JVM with compressed oops: 12 (header) + 4 (indices) + 4
 // (bits) + 4 (length) + 4 (nonZeroLongCount) + 8 (ramBytesUsed) = 36, aligned to 40.
 
-import { IllegalArgumentException } from "../errors.js";
+import { ArrayIndexOutOfBoundsException, IllegalArgumentException } from "../errors.js";
 import { DocIdSetIterator } from "../search/DocIdSetIterator.js";
 import type { Accountable } from "./Accountable.js";
 import { lassert } from "./assertions.js";
@@ -293,6 +293,10 @@ export class SparseFixedBitSet extends BitSet implements Bits, Accountable {
   nextSetBit(i: number): number {
     lassert(() => i < this._length);
     const i4096 = i >>> 12;
+    if (i4096 >= this.indices.length) {
+      // (Java's indices[i4096] throws here, a typed array would read undefined)
+      throw new ArrayIndexOutOfBoundsException("Index " + i4096 + " out of bounds for length " + this.indices.length);
+    }
     const index = this.indices[i4096]!;
     const bitArray = this.bits[i4096]!;
     let i64 = i >>> 6;
@@ -335,6 +339,10 @@ export class SparseFixedBitSet extends BitSet implements Bits, Accountable {
   prevSetBit(i: number): number {
     lassert(() => i >= 0);
     const i4096 = i >>> 12;
+    if (i4096 >= this.indices.length) {
+      // (Java's indices[i4096] throws here, a typed array would read undefined)
+      throw new ArrayIndexOutOfBoundsException("Index " + i4096 + " out of bounds for length " + this.indices.length);
+    }
     const index = this.indices[i4096]!;
     const bitArray = this.bits[i4096]!;
     let i64 = i >>> 6;
@@ -370,6 +378,10 @@ export class SparseFixedBitSet extends BitSet implements Bits, Accountable {
 
   private orBlock(i4096: number, index: bigint, bits: BigInt64Array, nonZeroLongCount: number): void {
     lassert(() => Long.bitCount(index) === nonZeroLongCount);
+    if (i4096 < 0 || i4096 >= this.indices.length) {
+      // e.g. or-ing a longer set: Java's indices[i4096] throws (a typed array would read undefined)
+      throw new ArrayIndexOutOfBoundsException("Index " + i4096 + " out of bounds for length " + this.indices.length);
+    }
     const currentIndex = this.indices[i4096]!;
     if (currentIndex === 0n) {
       // fast path: if we currently have nothing in the block, just copy the data
