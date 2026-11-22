@@ -82,3 +82,36 @@ test("StringBuilder", () => {
   sb.setLength(5);
   assert.equal(sb.toString(), "abc\0\0");
 });
+
+import { IllegalArgumentException } from "../src/errors.js";
+import { ArrayUtil } from "../src/util/ArrayUtil.js";
+import { NumericUtils } from "../src/util/NumericUtils.js";
+import { PriorityQueue } from "../src/util/PriorityQueue.js";
+
+test("NumericUtils constants", () => {
+  assert.equal(NumericUtils.PRECISION_STEP_DEFAULT, 16);
+  assert.equal(NumericUtils.PRECISION_STEP_DEFAULT_32, 8);
+  assert.equal(NumericUtils.SHIFT_START_LONG, 0x20);
+  assert.equal(NumericUtils.SHIFT_START_INT, 0x60);
+  assert.equal(NumericUtils.BUF_SIZE_LONG, 11);
+  assert.equal(NumericUtils.BUF_SIZE_INT, 6);
+});
+
+test("PriorityQueue: prepopulate defaults to true, maxSize is bounded", () => {
+  class Q extends PriorityQueue<number> {
+    protected override lessThan(a: number, b: number): boolean {
+      return a < b;
+    }
+    protected override getSentinelObject(): number | null {
+      return -1;
+    }
+  }
+  const q = new Q(3);
+  assert.equal(q.size(), 3);
+  assert.equal(q.top(), -1);
+  const tooBig = ArrayUtil.MAX_ARRAY_LENGTH;
+  assert.throws(
+    () => new Q(tooBig),
+    (e: Error) => e instanceof IllegalArgumentException && e.message === "maxSize must be <= " + (ArrayUtil.MAX_ARRAY_LENGTH - 1) + "; got: " + tooBig
+  );
+});

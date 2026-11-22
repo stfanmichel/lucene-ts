@@ -175,8 +175,16 @@ public class GoldenUtilSmall {
 
   static void smallFloat() {
     begin("smallFloat");
-    for (int i = 0; i < 1500; i++) {
-      float f = rndFloat();
+    List<Float> sf = new ArrayList<>();
+    sf.add(0f); sf.add(-0f); sf.add(Float.NaN); sf.add(Float.POSITIVE_INFINITY); sf.add(Float.NEGATIVE_INFINITY);
+    sf.add(Float.MIN_VALUE); sf.add(Float.MAX_VALUE); sf.add(1f); sf.add(-1f);
+    int[][] combos = {{3, 15}, {5, 2}, {4, 10}, {6, 0}, {1, 7}, {7, -3}};
+    for (int[] cb : combos) {
+      int fzero = (63 - cb[1]) << cb[0];
+      for (int k : new int[] {-1, 0, 1, 2, 0xfe, 0xff, 0x100, 0x101}) sf.add(Float.intBitsToFloat((fzero + k) << (24 - cb[0])));
+    }
+    for (int i = 0; i < 1500 + sf.size(); i++) {
+      float f = i < sf.size() ? sf.get(i) : rndFloat();
       String in = frawh(f);
       cs(in, java.util.Arrays.asList("315", "52", "4,10", "3,15", "5,2", "6,0", "1,7", "7,-3"), java.util.Arrays.asList(
           Integer.toString(SmallFloat.floatToByte315(f) & 0xff), Integer.toString(SmallFloat.floatToByte52(f) & 0xff),
@@ -346,7 +354,8 @@ public class GoldenUtilSmall {
       int step = r.nextInt(5) == 0 ? r.nextInt(80) - 3 : 1 + r.nextInt(16);
       if (r.nextInt(30) == 0) step = new int[] {Integer.MAX_VALUE, 64, 65, 1000, 32, 33, 63}[r.nextInt(7)];
       long min = rndLong(), max = rndLong();
-      switch (r.nextInt(5)) {
+      switch (r.nextInt(6)) {
+        case 5: max = min; break;
         case 0: if (min > max) { long t = min; min = max; max = t; } break;
         case 1: max = min + r.nextInt(2000); break;
         case 2: max = min + r.nextLong() % 100000L; break;
@@ -359,7 +368,8 @@ public class GoldenUtilSmall {
       try { NumericUtils.splitLongRange(new LNone(), step, min, max); out.add("none-ok"); } catch (Throwable t) { out.add(ex(t)); }
       cs(cfg, new ArrayList<String>(), out);
       int imin = rndInt(), imax = rndInt();
-      switch (r.nextInt(4)) {
+      switch (r.nextInt(5)) {
+        case 4: imax = imin; break;
         case 0: if (imin > imax) { int t = imin; imin = imax; imax = t; } break;
         case 1: imax = imin + r.nextInt(2000); break;
         default: break;
