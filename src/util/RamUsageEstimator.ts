@@ -21,7 +21,8 @@
 // class measures them from the running JVM; here they are fixed to what a
 // 64-bit HotSpot JVM with compressed object references reports, which is also
 // what the golden tests are generated with (java -XX:+UseCompressedOops).
-// humanReadableUnits() is ported too. sizeOf(), shallowSizeOf() and friends are not ported yet.
+// humanReadableUnits(), alignObjectSize() and sizeOf() of primitive arrays (typed arrays here) are ported too.
+// shallowSizeOf(), sizeOf(Object) and friends are not ported yet.
 
 export const RamUsageEstimator = {
   NUM_BYTES_BOOLEAN: 1,
@@ -46,6 +47,21 @@ export const RamUsageEstimator = {
   ONE_MB: 1024 * 1024,
   /** One gigabyte bytes. */
   ONE_GB: 1024 * 1024 * 1024,
+
+  /** Aligns an object size to the object alignment (a long computation in Java). */
+  alignObjectSize(size: number): number {
+    size += 8 - 1; // NUM_BYTES_OBJECT_ALIGNMENT - 1
+    return size - (size % 8);
+  },
+
+  /**
+   * Returns the size in bytes of a primitive array (byte[]: Uint8Array/Int8Array, char[]: Uint16Array,
+   * short[]: Int16Array, int[]: Int32Array, float[]: Float32Array, long[]: BigInt64Array, double[]: Float64Array).
+   */
+  sizeOf(arr: { length: number; BYTES_PER_ELEMENT: number }): number {
+    const el = arr.BYTES_PER_ELEMENT;
+    return RamUsageEstimator.alignObjectSize(16 + el * arr.length); // NUM_BYTES_ARRAY_HEADER
+  },
 
   /**
    * Returns <code>size</code> in human-readable units (GB, MB, KB or bytes).

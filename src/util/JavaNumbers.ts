@@ -195,3 +195,108 @@ export function doubleToLong(d: number): bigint {
   if (d <= -9223372036854775808) return -9223372036854775808n;
   return BigInt(Math.trunc(d));
 }
+
+const f32 = new Float32Array(1);
+const i32 = new Int32Array(f32.buffer);
+const dbl = new Float64Array(1);
+const i64 = new BigInt64Array(dbl.buffer);
+
+/** java.lang.Float: the bit-level conversions and Float.toString. A Java `float` is a `number` rounded with Math.fround. */
+export const Float = {
+  MAX_VALUE: 3.4028234663852886e38,
+  MIN_VALUE: 1.401298464324817e-45,
+  /** canonical NaN bits */
+  NaNBits: 0x7fc00000,
+
+  /** Float.floatToRawIntBits: the value is first rounded to a float. */
+  floatToRawIntBits(f: number): number {
+    f32[0] = f;
+    return i32[0]!;
+  },
+
+  /** Float.floatToIntBits: every NaN collapses to 0x7fc00000. */
+  floatToIntBits(f: number): number {
+    return Number.isNaN(f) ? 0x7fc00000 : Float.floatToRawIntBits(f);
+  },
+
+  /** Float.intBitsToFloat */
+  intBitsToFloat(bits: number): number {
+    i32[0] = bits;
+    return f32[0]!;
+  },
+
+  /** Float.toString(float): the shortest decimal that identifies the float (JDK 19+), Java's layout. */
+  toString(f: number): string {
+    return floatToString(f);
+  },
+} as const;
+
+/** java.lang.Double: the bit-level conversions (longs are bigint). */
+export const Double = {
+  MAX_VALUE: Number.MAX_VALUE,
+  MIN_VALUE: Number.MIN_VALUE,
+
+  /** Double.doubleToRawLongBits */
+  doubleToRawLongBits(d: number): bigint {
+    dbl[0] = d;
+    return i64[0]!;
+  },
+
+  /** Double.doubleToLongBits: every NaN collapses to 0x7ff8000000000000. */
+  doubleToLongBits(d: number): bigint {
+    return Number.isNaN(d) ? 0x7ff8000000000000n : Double.doubleToRawLongBits(d);
+  },
+
+  /** Double.longBitsToDouble */
+  longBitsToDouble(bits: bigint): number {
+    i64[0] = bits;
+    return dbl[0]!;
+  },
+
+  /** Double.toString(double) */
+  toString(d: number): string {
+    return doubleToString(d);
+  },
+} as const;
+
+/**
+ * Float.toString(float): like doubleToString, but the digits identify the value among floats (so 0.1f prints
+ * "0.1" and 1.0E10f prints "1.0E10").
+ */
+export function floatToString(f: number): string {
+  f = Math.fround(f);
+  if (Number.isNaN(f)) return "NaN";
+  if (f === Infinity) return "Infinity";
+  if (f === -Infinity) return "-Infinity";
+  if (f === 0) return Object.is(f, -0) ? "-0.0" : "0.0";
+  const sign = f < 0 ? "-" : "";
+  const abs = Math.abs(f);
+  // shortest digit count p such that the p-digit decimal nearest to abs reads back as the same float
+  let p = 1;
+  while (p < 9 && Math.fround(Number(abs.toExponential(p - 1))) !== abs) p++;
+  if (p === 1) {
+    // JDK 19+: two digits are printed when they identify the value; they are the two digits nearest to it
+    if (Math.fround(Number(abs.toExponential(1))) === abs) p = 2;
+  }
+  const [mant, exp] = abs.toExponential(p - 1).split("e") as [string, string];
+  const digits = mant.replace(".", "").replace(/0+$/, "") || "0";
+  const e = Number(exp);
+  if (abs >= 1e-3 && abs < 1e7) {
+    if (e >= 0) {
+      const intPart = digits.padEnd(e + 1, "0").slice(0, e + 1);
+      const frac = digits.slice(e + 1);
+      return sign + intPart + "." + (frac === "" ? "0" : frac);
+    }
+    return sign + "0." + "0".repeat(-e - 1) + digits;
+  }
+  const frac = digits.slice(1);
+  return sign + digits[0] + "." + (frac === "" ? "0" : frac) + "E" + e;
+}
+
+/** The narrowing conversion (int) d: NaN is 0, out-of-range values saturate, the rest truncates toward zero. */
+export function doubleToInt(d: number): number {
+  if (Number.isNaN(d)) return 0;
+  if (d >= 2147483647) return 2147483647;
+  if (d <= -2147483648) return -2147483648;
+  return Math.trunc(d) | 0;
+}

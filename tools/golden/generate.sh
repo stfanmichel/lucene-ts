@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates test/golden/util.json, util-refs.json, util-sorters.json, store-data.json, store-io.json, store-dir.json, store-more.json and store-fs.json from the ORIGINAL Lucene 5.2.1 Java classes.
+# Regenerates test/golden/util.json, util-small.json, util-refs.json, util-sorters.json, store-data.json, store-io.json, store-dir.json, store-more.json and store-fs.json from the ORIGINAL Lucene 5.2.1 Java classes.
 #
 # Usage: tools/golden/generate.sh [path/to/lucene-5.2.1] [scratch dir]
 #
@@ -33,7 +33,10 @@ javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
   "$STORE/FileSwitchDirectory.java" "$STORE/NRTCachingDirectory.java" "$HERE/GoldenStoreDir.java" "$HERE/GoldenStoreMore.java" \
   "$STORE/FSDirectory.java" "$STORE/SimpleFSDirectory.java" "$STORE/NIOFSDirectory.java" "$STORE/MMapDirectory.java" \
   "$STORE/ByteBufferIndexInput.java" "$STORE/SimpleFSLockFactory.java" "$STORE/NativeFSLockFactory.java" \
-  "$STORE/VerifyingLockFactory.java" "$HERE/org/apache/lucene/store/GoldenStoreFS.java"
+  "$STORE/VerifyingLockFactory.java" "$HERE/org/apache/lucene/store/GoldenStoreFS.java" \
+  "$UTIL/SloppyMath.java" "$UTIL/NumericUtils.java" "$UTIL/SmallFloat.java" "$UTIL/PriorityQueue.java" "$UTIL/SentinelIntSet.java" \
+  "$UTIL/MergedIterator.java" "$UTIL/SetOnce.java" "$UTIL/Counter.java" "$UTIL/RefCount.java" "$UTIL/ToStringUtils.java" \
+  "$UTIL/RamUsageEstimator.java" "$HERE/org/apache/lucene/util/GoldenUtilSmall.java"
 
 # tests.seed makes StringHelper.randomId() and BytesRef.hashCode() reproducible
 java -Dtests.seed=DEADBEEF -cp "$SCRATCH/classes" Golden > "$ROOT/test/golden/util.json"
@@ -72,3 +75,8 @@ FSDIR="$(mktemp -d)"
 java -ea:org.apache.lucene... -cp "$SCRATCH/classes" org.apache.lucene.store.GoldenStoreFS "$FSDIR" > "$ROOT/test/golden/store-fs.json"
 rm -rf "$FSDIR"
 echo "wrote $ROOT/test/golden/store-fs.json"
+
+# Small util classes (SloppyMath, NumericUtils, SmallFloat, PriorityQueue, SentinelIntSet, MergedIterator, SetOnce, Counter,
+# RefCount, ToStringUtils, RamUsageEstimator.sizeOf, Float.toString): assertions on, compressed oops pinned.
+java -XX:+UseCompressedOops -ea:org.apache.lucene.util... -cp "$SCRATCH/classes" org.apache.lucene.util.GoldenUtilSmall > "$ROOT/test/golden/util-small.json"
+echo "wrote $ROOT/test/golden/util-small.json"

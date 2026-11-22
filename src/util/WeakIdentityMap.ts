@@ -22,17 +22,13 @@
 // the two factory methods (HashMap / ConcurrentHashMap backed) are the same here; iteration is in insertion
 // order. Keys must be objects (WeakRef requirement) or null.
 
+import type { JavaIterator } from "./JavaIterator.js";
 import { NoSuchElementException, UnsupportedOperationException } from "../errors.js";
 
 /** The (private) NULL key marker of the Java class. */
 const NULL_KEY: object = {};
 
-/** The Java `Iterator` shape used by WeakIdentityMap (hasNext/next/remove). */
-export interface JavaIterator<T> {
-  hasNext(): boolean;
-  next(): T;
-  remove(): void;
-}
+export type { JavaIterator };
 
 interface Entry<V> {
   readonly ref: WeakRef<object>;
