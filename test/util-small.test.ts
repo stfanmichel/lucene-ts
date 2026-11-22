@@ -115,3 +115,62 @@ test("PriorityQueue: prepopulate defaults to true, maxSize is bounded", () => {
     (e: Error) => e instanceof IllegalArgumentException && e.message === "maxSize must be <= " + (ArrayUtil.MAX_ARRAY_LENGTH - 1) + "; got: " + tooBig
   );
 });
+
+import { DocIdSet } from "../src/search/DocIdSet.js";
+import type { DocIdSetIterator } from "../src/search/DocIdSetIterator.js";
+import { BitDocIdSet } from "../src/util/BitDocIdSet.js";
+import { FixedBitSet } from "../src/util/FixedBitSet.js";
+import { LongBitSet } from "../src/util/LongBitSet.js";
+import { AssertionError } from "../src/errors.js";
+
+test("FixedBitSet / LongBitSet equals compares type, length and words", () => {
+  const f = new FixedBitSet(10);
+  f.set(3);
+  assert.equal(f.equals(f), true);
+  assert.equal(f.equals(null), false);
+  assert.equal(f.equals({}), false);
+  assert.equal(f.equals(new FixedBitSet(11)), false);
+  const g = new FixedBitSet(10);
+  assert.equal(f.equals(g), false);
+  g.set(3);
+  assert.equal(f.equals(g), true);
+  // same numBits but a longer backing array
+  assert.equal(f.equals(new FixedBitSet(new BigInt64Array(3), 10)), false);
+  const l = new LongBitSet(10);
+  l.set(3);
+  assert.equal(l.equals(l), true);
+  assert.equal(l.equals(null), false);
+  assert.equal(l.equals(f), false);
+  assert.equal(l.equals(new LongBitSet(11)), false);
+  const m = new LongBitSet(10);
+  assert.equal(l.equals(m), false);
+  m.set(3);
+  assert.equal(l.equals(m), true);
+  assert.equal(l.equals(new LongBitSet(new BigInt64Array(3), 10)), false);
+});
+
+test("LongBitSet: bits past the used words must be clear", () => {
+  const w = new BigInt64Array(3);
+  w[2] = 1n;
+  assert.throws(() => new LongBitSet(w, 100), AssertionError);
+  assert.throws(() => new FixedBitSet(w, 100), AssertionError);
+});
+
+test("DocIdSet defaults and BitDocIdSet.Builder defaults", () => {
+  class D extends DocIdSet {
+    iterator(): DocIdSetIterator | null {
+      return null;
+    }
+    ramBytesUsed(): number {
+      return 0;
+    }
+  }
+  const d = new D();
+  assert.equal(d.isCacheable(), false);
+  assert.equal(d.bits(), null);
+  assert.deepEqual(d.getChildResources(), []);
+  const b = new BitDocIdSet.Builder(10);
+  assert.equal(b.dense(), false);
+  assert.equal(b.isDefinitelyEmpty(), true);
+  assert.equal(b.build(), null);
+});
