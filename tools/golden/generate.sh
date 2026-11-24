@@ -40,7 +40,7 @@ javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
   "$UTIL/RamUsageEstimator.java" "$HERE/org/apache/lucene/util/GoldenUtilSmall.java" \
   "$UTIL/FixedBitSet.java" "$UTIL/LongBitSet.java" "$UTIL/SparseFixedBitSet.java" "$UTIL/BitSet.java" "$UTIL/BitSetIterator.java" \
   "$UTIL/BitDocIdSet.java" "$SEARCH/DocIdSet.java" "$SEARCH/DocIdSetIterator.java" "$HERE/org/apache/lucene/util/GoldenBitSets.java" \
-  "$HERE/org/apache/lucene/util/packed/GoldenPacked.java"
+  "$HERE/org/apache/lucene/util/packed/GoldenPacked.java" "$HERE/org/apache/lucene/codecs/GoldenCodecUtil.java"
 
 # tests.seed makes StringHelper.randomId() and BytesRef.hashCode() reproducible
 java -Dtests.seed=DEADBEEF -cp "$SCRATCH/classes" Golden > "$ROOT/test/golden/util.json"
@@ -92,3 +92,7 @@ echo "wrote $ROOT/test/golden/bitsets.json"
 # util.packed (BulkOperation*, PackedInts and its readers/writers/mutables, PackedDataInput/Output), assertions on.
 java -XX:+UseCompressedOops -ea:org.apache.lucene... -cp "$SCRATCH/classes" org.apache.lucene.util.packed.GoldenPacked > "$ROOT/test/golden/packed.json"
 echo "wrote $ROOT/test/golden/packed.json"
+
+# CodecUtil (headers, index headers, footers, checksums) and the index format exceptions, assertions on.
+java -ea:org.apache.lucene... -cp "$SCRATCH/classes" org.apache.lucene.codecs.GoldenCodecUtil > "$ROOT/test/golden/codecutil.json"
+echo "wrote $ROOT/test/golden/codecutil.json"

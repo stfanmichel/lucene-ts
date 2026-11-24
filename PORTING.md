@@ -40,6 +40,8 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 | `util.PriorityQueue`, `SentinelIntSet`, `MergedIterator` (+ `MapOfSets`, `FilterIterator`, `JavaIterator`), `SmallFloat`, `SloppyMath`, `NumericUtils` (codage préfixe, bits triables, `splitLongRange`/`splitIntRange` ; méthodes basées sur `Terms` reportées à la couche index), `SetOnce`, `Counter`, `RefCount`, `ToStringUtils`, `Bits`/`MutableBits`/`BytesRefIterator` (interfaces), `StringBuilder` (+ `Float`/`Double`/`floatToString`/`doubleToInt` dans `JavaNumbers`) | porté, testé contre le Java (`util-small.json` : ~28 000 cas — `Float.toString` sur 5 000 flottants, tables et fonctions de `SloppyMath` bit à bit, codage/décodage préfixe y compris octets invalides, découpage d'intervalles, scripts aléatoires de `PriorityQueue` avec sentinelles / `SentinelIntSet` / `MergedIterator`) |
 | `search.DocIdSetIterator`, `search.DocIdSet` (+ `EMPTY`), `util.BitSet`, `FixedBitSet`, `LongBitSet`, `SparseFixedBitSet`, `BitSetIterator`, `BitDocIdSet` (+ `Builder`, exposé aussi comme `BitDocIdSetBuilder`) | porté, testé contre le Java avec assertions activées (`bitsets.json` : scripts aléatoires d'opérations, y compris les débordements, assertions, `IllegalStateException` d'itérateur positionné, `AIOOBE`) |
 | `util.RamUsageEstimator` | constantes de taille, `humanReadableUnits`, `alignObjectSize`, `sizeOf(tableau typé)` (`sizeOf(Accountable[])`, `shallowSizeOf` & co à faire) |
+| `util.packed.PackedInts` (+ `Format`, `FormatAndBits`, `Reader`, `Mutable`, `Writer`, `ReaderIterator`, `Decoder`/`Encoder`, `NullReader`), `BulkOperation` (+ `BulkOperationPacked`, `BulkOperationPackedSingleBlock`), `Direct8/16/32/64`, `Packed64`, `Packed64SingleBlock`, `Packed8/16ThreeBlocks`, `DirectPackedReader`, `DirectPacked64SingleBlockReader`, `PackedReaderIterator`, `PackedWriter`, `PackedDataInput`/`Output` | porté, testé contre le Java (`packed.json`) ; reste `DirectReader/Writer`, `BlockPacked*`, `MonotonicBlockPacked*`, `PackedLongValues`, `GrowableWriter`, `PagedMutable`… |
+| `codecs.CodecUtil`, `index.CorruptIndexException`, `IndexFormatTooOldException`, `IndexFormatTooNewException`, `index.NumericDocValues` | porté, testé contre le Java (`codecutil.json`) |
 | `util.OfflineSorter` | à faire (dépend de `Directory`) |
 | reste de `util` (≈165 fichiers), `analysis`, `document`, `index`, `search`, `codecs` | à faire |
 
@@ -180,6 +182,26 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 - Les `long` en `bigint` sont nettement plus lents que les `long` Java : à revoir pour les structures chaudes
   (`FixedBitSet`, packed ints, etc.) quand on y arrivera.
 - `hashCode()` de `BytesRef` utilise une graine aléatoire par processus, comme en Java (voir `TESTS_SEED`).
+
+## Écarts propres à `util.packed`
+
+- Les types imbriqués de `PackedInts` sont dans `PackedIntsBase.ts` (cycle d'imports : `PackedInts` instancie les
+  classes concrètes qui étendent ces types) et réexportés par `PackedInts.ts` sous les noms `PackedIntsFormat`,
+  `PackedIntsReader`, `PackedIntsMutable`, `PackedIntsWriter`, `PackedIntsDecoder`, `PackedIntsEncoder`,
+  `PackedIntsReaderIterator`, `PackedIntsFormatAndBits`, `PackedIntsNullReader` ; `PackedInts.Format` reste
+  accessible comme valeur (`PackedInts.Format.PACKED`).
+- Surcharges renommées : `Reader.get(i, long[], off, len)` → `getBulk`, `Mutable.set(i, long[], off, len)` → `setBulk`,
+  `ReaderIterator.next(count)` → `nextRef`. `Decoder.decode`/`Encoder.encode` gardent leur nom, les 4 variantes
+  (`long[]`/`byte[]` en blocs, `long[]`/`int[]` en valeurs) étant distinguées par le type des tableaux.
+- `BulkOperation.of` est la fonction `bulkOperationOf` (`BulkOperationFactory.ts`, évite un cycle d'imports).
+- Lucene utilise des classes générées déroulées (`BulkOperationPacked1..24`, `Packed64SingleBlock1..32`) ; le port
+  n'utilise que les versions génériques (`BulkOperationPacked`, `Packed64SingleBlockN`), censées être identiques :
+  les tests comparent bit à bit avec les classes déroulées du Java. Conséquence : `toString()` de
+  `Packed64SingleBlockN` reproduit le nom Java (`Packed64SingleBlock21`).
+- Les valeurs packées sont des `bigint` (`long`), `long[]` → `BigInt64Array`, `int[]` → `Int32Array`,
+  `byte[]` (blocs) → `Uint8Array`.
+- `Mutable.save` passe par `PackedIntsMutable.writerFactory`, renseigné à l'import de `PackedInts.ts`.
+- Les lectures hors bornes ne lèvent pas `ArrayIndexOutOfBoundsException` (tableaux typés) : les tests ne les couvrent pas.
 
 ## Vérification
 
