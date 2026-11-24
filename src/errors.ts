@@ -271,3 +271,23 @@ export function getSuppressed(exception: unknown): unknown[] {
 export function getMessage(e: Error): string | null {
   return Object.prototype.hasOwnProperty.call(e, "message") ? e.message : null;
 }
+
+/** java.text.ParseException (checked in Java): a message and the offset where the error was found. */
+export class ParseException extends Error {
+  private readonly errorOffset: number;
+  constructor(message: string, errorOffset: number) {
+    super(message);
+    this.name = "ParseException";
+    this.errorOffset = errorOffset;
+  }
+
+  getErrorOffset(): number {
+    return this.errorOffset;
+  }
+
+  /** Throwable.initCause */
+  initCause(cause: unknown): this {
+    (this as { cause?: unknown }).cause = cause;
+    return this;
+  }
+}

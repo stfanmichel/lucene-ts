@@ -24,6 +24,8 @@
  *    (`BigInt.asIntN(64, ...)`), because a JS number cannot hold 64 bits.
  */
 
+import { NumberFormatException } from "../errors.js";
+
 const f64 = new Float64Array(1);
 const u32 = new Uint32Array(f64.buffer);
 
@@ -49,6 +51,47 @@ export const Integer = {
   numberOfTrailingZeros(i: number): number {
     i = i | 0;
     return i === 0 ? 32 : 31 - Math.clz32(i & -i);
+  },
+
+  /**
+   * Integer.parseInt(String s, int radix): optional '+'/'-' sign followed by digits (any Unicode decimal digit, as
+   * Character.digit). Throws NumberFormatException with the JDK 21 messages.
+   */
+  parseInt(s: string | null, radix = 10): number {
+    if (s === null || s === undefined) {
+      throw new NumberFormatException("Cannot parse null string: null");
+    }
+    const bad = (): NumberFormatException =>
+      new NumberFormatException('For input string: "' + s + '"' + (radix === 10 ? "" : " under radix " + radix));
+    if (radix < Character.MIN_RADIX) {
+      throw new NumberFormatException("radix " + radix + " less than Character.MIN_RADIX");
+    }
+    if (radix > Character.MAX_RADIX) {
+      throw new NumberFormatException("radix " + radix + " greater than Character.MAX_RADIX");
+    }
+    const len = s.length;
+    if (len === 0) {
+      throw bad();
+    }
+    let i = 0;
+    let negative = false;
+    const first = s.charCodeAt(0);
+    if (first < 0x30) {
+      if (first === 0x2d) negative = true;
+      else if (first !== 0x2b) throw bad();
+      if (len === 1) throw bad();
+      i++;
+    }
+    let result = 0;
+    for (; i < len; i++) {
+      const digit = Character.digit(s.charCodeAt(i), radix);
+      if (digit < 0) throw bad();
+      result = result * radix + digit;
+      if (result > 2147483648) throw bad();
+    }
+    if (negative) return -result;
+    if (result > 2147483647) throw bad();
+    return result;
   },
 
   /** Integer.toHexString (treats the value as unsigned, lower case, no padding). */

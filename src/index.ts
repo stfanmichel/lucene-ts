@@ -114,6 +114,8 @@ export { SentinelIntSet } from "./util/SentinelIntSet.js";
 export { SetOnce } from "./util/SetOnce.js";
 export { SloppyMath } from "./util/SloppyMath.js";
 export { SmallFloat } from "./util/SmallFloat.js";
+export { Version } from "./util/Version.js";
+export { StrictStringTokenizer } from "./util/StrictStringTokenizer.js";
 export { StringBuilder } from "./util/StringBuilder.js";
 export { ToStringUtils } from "./util/ToStringUtils.js";
 export { CodecUtil } from "./codecs/CodecUtil.js";
