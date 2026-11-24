@@ -74,6 +74,28 @@ export const Long = {
     return BigInt.asIntN(64, x);
   },
 
+  /**
+   * The widening conversion (float) l of a long: rounded once to the nearest float, ties to even (Number(l) would
+   * round twice above 2^53).
+   */
+  toFloat(l: bigint): number {
+    const neg = l < 0n;
+    let a = neg ? -l : l;
+    if (a < 1n << 53n) {
+      const f = Math.fround(Number(a));
+      return neg ? -f : f;
+    }
+    // keep the top 24 bits, round to nearest even using the dropped bits
+    const bits = a.toString(2).length;
+    const drop = BigInt(bits - 24);
+    const rest = a & ((1n << drop) - 1n);
+    const half = 1n << (drop - 1n);
+    a >>= drop;
+    if (rest > half || (rest === half && (a & 1n) === 1n)) a += 1n;
+    const f = Number(a) * Math.pow(2, Number(drop));
+    return neg ? -f : f;
+  },
+
   /** Long.bitCount */
   bitCount(x: bigint): number {
     const u = BigInt.asUintN(64, x);

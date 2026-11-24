@@ -201,6 +201,12 @@ globales de la machine (pas d'accès réseau pour `npm install`). Un `npm instal
 - Les valeurs packées sont des `bigint` (`long`), `long[]` → `BigInt64Array`, `int[]` → `Int32Array`,
   `byte[]` (blocs) → `Uint8Array`.
 - `Mutable.save` passe par `PackedIntsMutable.writerFactory`, renseigné à l'import de `PackedInts.ts`.
+- `BlockPackedReaderIterator.next(int count)` (retourne un `LongsRef`) devient `nextRef(count)` (comme
+  `PackedInts.ReaderIterator`). `MonotonicBlockPackedReader` : constructeur `protected` (la sous-classe anonyme de
+  `of` pour les anciennes versions en a besoin) ; `expected()` reproduit `origin + (long)(average * (long)index)`
+  avec arrondi float (`Math.fround`) et saturation `(long)` ; `Long.toFloat` donne la conversion long→float exacte.
+  `LongValues.get(index: number)` fusionne `get(int)`/`get(long)` ; `DirectReader.getInstance` renvoie une classe
+  unique `DirectReaderN` (switch sur `bitsPerValue`) à la place des classes anonymes Java.
 - Les lectures hors bornes ne lèvent pas `ArrayIndexOutOfBoundsException` (tableaux typés) : les tests ne les couvrent pas.
 
 ## Vérification
