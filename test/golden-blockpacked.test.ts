@@ -245,6 +245,17 @@ test("blockpacked: writers, readers, iterators vs Java", () => {
           it.skip(n() + 1);
           return dig(s);
         }
+        case "I-skip0": {
+          if (bytes === null) return "nofile";
+          const it = new BlockPackedReaderIterator(new ByteArrayDataInput(bytes), PackedInts.VERSION_CURRENT, bs, n());
+          it.skip(0);
+          let s = "ord=" + it.ord();
+          for (let i = 0; i < Math.min(n(), 3); i++) s += " " + hx(it.next());
+          it.skip(0);
+          s += " ord=" + it.ord();
+          it.skip(n());
+          return s;
+        }
         case "I-bad":
           new BlockPackedReaderIterator(new ByteArrayDataInput(new Uint8Array(0)), PackedInts.VERSION_CURRENT, 100, 5);
           return "no exception";

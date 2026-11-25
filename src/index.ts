@@ -115,6 +115,7 @@ export { SetOnce } from "./util/SetOnce.js";
 export { SloppyMath } from "./util/SloppyMath.js";
 export { SmallFloat } from "./util/SmallFloat.js";
 export { Version } from "./util/Version.js";
+export { PagedBytes, PagedBytesReader, PagedBytesDataInput, PagedBytesDataOutput } from "./util/PagedBytes.js";
 export { StrictStringTokenizer } from "./util/StrictStringTokenizer.js";
 export { StringBuilder } from "./util/StringBuilder.js";
 export { ToStringUtils } from "./util/ToStringUtils.js";

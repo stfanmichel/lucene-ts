@@ -321,6 +321,17 @@ public class GoldenBlockPacked {
         it.skip(n + 1);
         return dig(s.toString());
       });
+      run("I-skip0", () -> {
+        if (bytes == null) return "nofile";
+        BlockPackedReaderIterator it = new BlockPackedReaderIterator(new ByteArrayDataInput(bytes), PackedInts.VERSION_CURRENT, bs, n);
+        it.skip(0);
+        StringBuilder s = new StringBuilder("ord=" + it.ord());
+        for (int i = 0; i < Math.min(n, 3); i++) s.append(' ').append(Long.toHexString(it.next()));
+        it.skip(0);
+        s.append(" ord=").append(it.ord());
+        it.skip(n);
+        return s.toString();
+      });
       run("I-bad", () -> {
         new BlockPackedReaderIterator(new ByteArrayDataInput(new byte[0]), PackedInts.VERSION_CURRENT, 100, 5);
         return "no exception";
