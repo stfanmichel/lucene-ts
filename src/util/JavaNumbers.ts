@@ -145,6 +145,48 @@ export const Long = {
     return Integer.bitCount(Number(u & 0xffffffffn)) + Integer.bitCount(Number(u >> 32n));
   },
 
+
+  /**
+   * Long.parseLong(String s, int radix): optional '+'/'-' sign followed by digits (any Unicode decimal digit, as
+   * Character.digit). Throws NumberFormatException with the JDK 21 messages.
+   */
+  parseLong(s: string | null, radix = 10): bigint {
+    if (s === null || s === undefined) {
+      throw new NumberFormatException("Cannot parse null string: null");
+    }
+    const bad = (): NumberFormatException =>
+      new NumberFormatException('For input string: "' + s + '"' + (radix === 10 ? "" : " under radix " + radix));
+    if (radix < Character.MIN_RADIX) {
+      throw new NumberFormatException("radix " + radix + " less than Character.MIN_RADIX");
+    }
+    if (radix > Character.MAX_RADIX) {
+      throw new NumberFormatException("radix " + radix + " greater than Character.MAX_RADIX");
+    }
+    const len = s.length;
+    if (len === 0) {
+      throw bad();
+    }
+    let i = 0;
+    let negative = false;
+    const first = s.charCodeAt(0);
+    if (first < 0x30) {
+      if (first === 0x2d) negative = true;
+      else if (first !== 0x2b) throw bad();
+      if (len === 1) throw bad();
+      i++;
+    }
+    let result = 0n;
+    const r = BigInt(radix);
+    for (; i < len; i++) {
+      const digit = Character.digit(s.charCodeAt(i), radix);
+      if (digit < 0) throw bad();
+      result = result * r + BigInt(digit);
+      if (result > 9223372036854775808n) throw bad();
+    }
+    if (negative) return -result;
+    if (result > 9223372036854775807n) throw bad();
+    return result;
+  },
   /** Long.numberOfTrailingZeros */
   numberOfTrailingZeros(x: bigint): number {
     const u = BigInt.asUintN(64, x);

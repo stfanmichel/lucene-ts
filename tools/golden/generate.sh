@@ -40,7 +40,7 @@ javac --release 8 -nowarn -d "$SCRATCH/classes" -sourcepath "$SRC" \
   "$UTIL/RamUsageEstimator.java" "$HERE/org/apache/lucene/util/GoldenUtilSmall.java" \
   "$UTIL/FixedBitSet.java" "$UTIL/LongBitSet.java" "$UTIL/SparseFixedBitSet.java" "$UTIL/BitSet.java" "$UTIL/BitSetIterator.java" \
   "$UTIL/BitDocIdSet.java" "$SEARCH/DocIdSet.java" "$SEARCH/DocIdSetIterator.java" "$HERE/org/apache/lucene/util/GoldenBitSets.java" \
-  "$HERE/org/apache/lucene/util/packed/GoldenPacked.java" "$HERE/org/apache/lucene/util/packed/GoldenBlockPacked.java" "$HERE/org/apache/lucene/util/GoldenVersion.java" "$HERE/org/apache/lucene/util/GoldenPagedBytes.java" "$HERE/org/apache/lucene/util/fst/GoldenFST.java" "$HERE/org/apache/lucene/codecs/GoldenCodecUtil.java"
+  "$HERE/org/apache/lucene/util/packed/GoldenPacked.java" "$HERE/org/apache/lucene/util/packed/GoldenBlockPacked.java" "$HERE/org/apache/lucene/util/GoldenVersion.java" "$HERE/org/apache/lucene/util/GoldenPagedBytes.java" "$HERE/org/apache/lucene/util/fst/GoldenFST.java" "$HERE/org/apache/lucene/index/GoldenIndexMeta.java" "$HERE/org/apache/lucene/codecs/GoldenCodecUtil.java"
 
 # tests.seed makes StringHelper.randomId() and BytesRef.hashCode() reproducible
 java -Dtests.seed=DEADBEEF -cp "$SCRATCH/classes" Golden > "$ROOT/test/golden/util.json"
@@ -108,6 +108,10 @@ echo "wrote $ROOT/test/golden/pagedbytes.json"
 # util.fst (BytesStore, FST read path, BytesRefFSTEnum); FSTs are built by the original Builder
 java -XX:+UseCompressedOops -ea:org.apache.lucene... -cp "$SCRATCH/classes" org.apache.lucene.util.fst.GoldenFST > "$ROOT/test/golden/fst.json"
 echo "wrote $ROOT/test/golden/fst.json"
+
+# index.IndexFileNames / FieldInfo / FieldInfos
+java -ea:org.apache.lucene... -cp "$SCRATCH/classes" org.apache.lucene.index.GoldenIndexMeta > "$ROOT/test/golden/indexmeta.json"
+echo "wrote $ROOT/test/golden/indexmeta.json"
 
 # CodecUtil (headers, index headers, footers, checksums) and the index format exceptions, assertions on.
 java -ea:org.apache.lucene... -cp "$SCRATCH/classes" org.apache.lucene.codecs.GoldenCodecUtil > "$ROOT/test/golden/codecutil.json"
